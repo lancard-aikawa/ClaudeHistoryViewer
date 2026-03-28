@@ -1,0 +1,204 @@
+# Claude Chat Viewer
+
+Claude Code のセッション履歴を LINE のようなチャット形式で表示する Python 製ビューアです。
+
+![ライトモード / ダークモード対応](https://img.shields.io/badge/theme-light%20%2F%20dark-blue)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-green)
+![依存ライブラリなし](https://img.shields.io/badge/deps-none-brightgreen)
+
+---
+
+## スクリーンショット
+
+| ライトモード | ダークモード |
+|---|---|
+| ユーザー発言が右（紫バブル）、Claude が左（白バブル） | 同じレイアウト、背景が暗色 |
+
+---
+
+## 特徴
+
+- **LINEライクなチャット表示** — ユーザー発言は右、Claude の返答は左のバブルで表示
+- **長文の折りたたみ** — 行数・文字数の閾値を超えたメッセージは「続きを見る」ボタンで展開（設定可能）
+- **ツール呼び出しの可視化** — 📖Read / ✏️Edit / 💻Bash 等をチップ表示。ファイル名も確認できる
+- **画像インライン表示** — ScreenShot 等の画像はバブル内に表示、クリックで拡大
+- **思考プロセスの表示** — 🤔「思考プロセス」として折りたたみ表示
+- **ダーク / ライトモード** — ワンクリック切替、設定は保存
+- **フォントサイズ調整** — A+ / A- で変更、設定は保存
+- **時刻表示の切替** — 各メッセージの日時を表示 / 非表示
+- **スター・タグ・メモ** — メッセージ / セッション単位でメモを記録
+- **スター一覧ビュー** — スター付きセッション / メッセージを一覧表示
+- **全文検索** — Ctrl+K で起動。全プロジェクト横断検索、テキスト / ファイル名で種別指定可能
+- **サイドバー絞り込み** — セッション名をリアルタイムフィルタリング
+- **サイドバーリサイズ** — ドラッグで幅を自由に調整
+
+---
+
+## 必要環境
+
+| 項目 | 要件 |
+|---|---|
+| Python | 3.10 以上 |
+| 外部ライブラリ | **不要**（標準ライブラリのみ） |
+| OS | Windows / WSL / Linux / macOS |
+| Claude Code | `~/.claude/projects/` にセッションデータがあること |
+
+---
+
+## インストール
+
+```bash
+git clone https://github.com/yourname/ClaudeChat.git
+cd ClaudeChat
+```
+
+追加インストールは不要です。
+
+---
+
+## 使い方
+
+### 初回セットアップ
+
+設定ファイルのサンプルをコピーして使います。
+
+```bash
+# Linux / macOS / WSL
+cp settings.json.sample settings.json
+
+# Windows (コマンドプロンプト)
+copy settings.json.sample settings.json
+
+# Windows (PowerShell)
+Copy-Item settings.json.sample settings.json
+```
+
+`settings.json` は `.gitignore` に含まれているため、個人設定がリポジトリに混入しません。
+
+### 基本起動
+
+```bash
+python claude_chat_viewer.py
+```
+
+起動後、自動でブラウザが開きます（`http://localhost:8080`）。
+
+### オプション
+
+```bash
+# ポートを変更
+python claude_chat_viewer.py --port 9090
+
+# ブラウザを自動で開かない
+python claude_chat_viewer.py --no-browser
+
+# Claude データディレクトリを明示指定
+python claude_chat_viewer.py --claude-dir /custom/path/.claude
+```
+
+### WSL から Windows ブラウザで開く場合
+
+```bash
+python claude_chat_viewer.py --no-browser
+# → http://localhost:8080 をブラウザで手動アクセス
+```
+
+---
+
+## 操作ガイド
+
+### サイドバー
+
+| 操作 | 内容 |
+|---|---|
+| プロジェクト名をクリック | セッション一覧を展開 / 折りたたむ |
+| セッションをクリック | チャット表示 |
+| 上部テキストボックス | セッション名でリアルタイム絞り込み |
+| サイドバー右端をドラッグ | 幅を調整 |
+
+### ヘッダーボタン
+
+| ボタン | 機能 |
+|---|---|
+| 🔍 検索 | 検索パネルを開く（Ctrl+K も可） |
+| ⭐ スター | スター付きセッション / メッセージの一覧 |
+| 🕐 時刻 | 時刻表示の切替 |
+| 🌙 / ☀️ | ダーク / ライトモード切替 |
+| A- / A+ | フォントサイズ変更 |
+| Fnt: ドロップダウン | フォント選択（自動優先順 / 個別指定） |
+
+#### フォント選択について
+
+「自動」を選ぶと `Cascadia Code → Cascadia Mono → Consolas → BIZ UDゴシック → Noto Sans Mono` の順に、インストール済みのフォントが自動で使われます。VS Code が入っていれば通常 Cascadia Code が適用されます。個別に選ぶ場合はドロップダウンから指定してください。設定はブラウザに保存されます。
+
+### メッセージ操作
+
+メッセージにマウスを乗せると操作ツールバーが表示されます。
+
+| ボタン | 機能 |
+|---|---|
+| ☆ / ⭐ | スターの付け外し |
+| 📝 | メモ・タグの編集 |
+
+### 検索
+
+- **テキスト検索** — メッセージ本文を横断検索
+- **ファイル名検索** — ツール呼び出し中のファイルパスで検索
+- スコープ選択で特定プロジェクトのみに絞り込み可能
+- 結果をクリックするとそのメッセージにジャンプ
+
+---
+
+## 設定ファイル（settings.json）
+
+`settings.json.sample` をコピーした `settings.json` を編集することで動作をカスタマイズできます。**変更は再起動後に反映されます。**
+
+```jsonc
+{
+  "port": 8080,               // ポート番号
+  "auto_open_browser": true,  // 起動時にブラウザを自動で開く
+
+  "collapse_lines": 15,       // これ以上の行数で本文を折りたたむ
+  "collapse_chars": 600,      // これ以上の文字数で折りたたむ（行数・文字数どちらか先に達した方が適用）
+  "preview_chars":  300,      // 折りたたみ時に表示するプレビュー文字数
+
+  "show_timestamp":  true,    // メッセージの時刻を表示する（ヘッダーボタンの初期状態）
+  "show_thinking":   true,    // 思考プロセスブロックを表示する
+  "show_tool_chips": true,    // ツール呼び出しチップを表示する
+  "max_search_results": 300   // 検索結果の最大件数
+}
+```
+
+> `port` と `auto_open_browser` はコマンドライン引数（`--port`, `--no-browser`）で上書きできます。
+> 上書き不可のキーは無視されます（型が異なる場合も同様）。
+
+### 設定の優先順位
+
+```
+コマンドライン引数  >  settings.json  >  デフォルト値
+```
+
+---
+
+## データとメタデータ
+
+| ファイル / ディレクトリ | 内容 |
+|---|---|
+| `~/.claude/projects/` | Claude Code が生成するセッションデータ（JSONL）。**読み取りのみ** |
+| `~/.claude/chat-viewer-meta.json` | スター・タグ・メモの保存先（本ツールが作成） |
+
+> セッションデータ自体は変更しません。
+
+---
+
+## データ形式
+
+Claude Code は `~/.claude/projects/<プロジェクト名>/<セッションID>.jsonl` に各セッションを保存します。
+
+プロジェクト名はワーキングディレクトリのパスをエンコードしたものです（例: `f--Repos-My-ClaudeChat` → `f:\Repos\My\ClaudeChat`）。
+
+---
+
+## ライセンス
+
+MIT
