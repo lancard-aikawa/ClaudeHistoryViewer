@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Claude Chat Viewer - LINEライクな Claude Code セッションビューア
+Claude History Viewer - LINEライクな Claude Code セッションビューア
 Usage: python claude_chat_viewer.py [--port 8080] [--claude-dir ~/.claude]
 """
 
@@ -499,7 +499,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Claude Chat Viewer</title>
+<title>Claude History Viewer</title>
 <style>
 /* ── Variables ── */
 :root {
@@ -728,7 +728,7 @@ input{font:inherit;color:inherit}
 <div id="app">
   <!-- Header -->
   <div id="header">
-    <h1>💬 Claude Chat Viewer</h1>
+    <h1>💬 Claude History Viewer</h1>
     <button class="hbtn" id="btn-search" title="検索 (Ctrl+K)">🔍 検索</button>
     <button class="hbtn" id="btn-starred" title="スター一覧">⭐ スター</button>
     <button class="hbtn" id="btn-ts" title="時刻表示切替">🕐 時刻</button>
@@ -1647,7 +1647,7 @@ init();
 def main():
     cfg = load_settings()
 
-    parser = argparse.ArgumentParser(description="Claude Chat Viewer")
+    parser = argparse.ArgumentParser(description="Claude History Viewer")
     parser.add_argument("--port",       type=int,  default=cfg["port"])
     parser.add_argument("--claude-dir", type=Path, default=DEFAULT_CLAUDE_DIR)
     parser.add_argument("--no-browser", action="store_true",
@@ -1668,7 +1668,7 @@ def main():
 
     server = HTTPServer(("127.0.0.1", args.port), handler)
     url = f"http://localhost:{args.port}"
-    print(f"Claude Chat Viewer: {url}")
+    print(f"Claude History Viewer: {url}")
     print(f"設定ファイル: {SETTINGS_FILE}")
     print("停止: Ctrl+C")
 
