@@ -131,6 +131,9 @@ class ClaudeDataReader:
                     obj = json.loads(line)
                     if obj.get("type") not in ("user", "assistant"):
                         continue
+                    # Skip lines that belong to a different session (cross-session contamination)
+                    if obj.get("sessionId") and obj.get("sessionId") != session_id:
+                        continue
                     msg = _process_message(obj)
                     if msg:
                         messages.append(msg)
@@ -324,6 +327,9 @@ def _process_message(obj: dict) -> dict | None:
     if role == "assistant" and not text_parts and not tool_uses and not thinking_blocks:
         return None
 
+    # Detect plan-mode injection ("Implement the following plan:")
+    plan_content = obj.get("planContent")
+
     return {
         "uuid": obj.get("uuid", ""),
         "role": role,
@@ -332,6 +338,7 @@ def _process_message(obj: dict) -> dict | None:
         "thinking": thinking_blocks,
         "tool_uses": tool_uses,
         "images": images,
+        "plan_content": plan_content,
     }
 
 def _process_tool_use(block: dict) -> dict:
@@ -581,18 +588,21 @@ input{font:inherit;color:inherit}
 #sidebar-search{width:100%;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--search-bg);color:var(--text);font-size:13px;outline:none}
 #sidebar-search:focus{border-color:var(--accent)}
 #project-list{flex:1;overflow-y:auto;padding:6px 0}
-.proj-header{display:flex;align-items:center;gap:6px;padding:8px 14px 4px;cursor:pointer;user-select:none}
+.proj-header{display:flex;align-items:center;gap:6px;padding:9px 12px 9px 14px;cursor:pointer;user-select:none;border-bottom:1px solid var(--border);margin-top:2px}
+.proj-header:first-child{margin-top:0}
 .proj-header:hover{background:var(--session-hover)}
-.proj-caret{font-size:10px;transition:transform .15s;display:inline-block}
+.proj-header.open{border-bottom-color:transparent}
+.proj-caret{font-size:10px;transition:transform .15s;display:inline-block;color:var(--text-muted);flex-shrink:0}
 .proj-header.open .proj-caret{transform:rotate(90deg)}
-.proj-name{font-weight:600;font-size:12px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.proj-count{font-size:11px;color:var(--text-muted);flex-shrink:0}
-.session-list{display:none;padding:0 6px 4px}
+.proj-icon{font-size:13px;flex-shrink:0}
+.proj-name{font-weight:700;font-size:12px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.01em}
+.proj-count{font-size:10px;color:var(--text-muted);background:var(--chip-bg);padding:1px 6px;border-radius:8px;flex-shrink:0}
+.session-list{display:none;padding:4px 8px 8px 20px;border-left:2px solid var(--border);margin:0 0 4px 18px}
 .session-list.open{display:block}
-.sess-item{padding:7px 10px;border-radius:8px;cursor:pointer;transition:background .1s}
+.sess-item{padding:6px 8px;border-radius:6px;cursor:pointer;transition:background .1s;margin-bottom:1px}
 .sess-item:hover{background:var(--session-hover)}
 .sess-item.active{background:var(--session-active)}
-.sess-title{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess-title{font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sess-meta{display:flex;align-items:center;gap:6px;margin-top:2px}
 .sess-date{font-size:11px;color:var(--text-muted)}
 .sess-count{font-size:11px;color:var(--text-muted)}
@@ -606,6 +616,16 @@ input{font:inherit;color:inherit}
 #chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
 #chat-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:14px;text-align:center;flex-direction:column;gap:8px}
 #chat-empty .icon{font-size:48px}
+/* ── Compaction notice ── */
+.compaction-notice{display:flex;align-items:center;justify-content:center;padding:6px 0 2px}
+.compaction-notice span{font-size:12px;color:var(--text-muted);background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:3px 12px}
+/* ── Plan block ── */
+.plan-block{margin:4px 0;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--sidebar-bg)}
+.plan-block summary{display:flex;align-items:center;gap:6px;padding:8px 12px;cursor:pointer;font-size:12px;color:var(--text-muted);user-select:none;list-style:none}
+.plan-block summary::marker{display:none}
+.plan-block summary:hover{background:var(--session-hover)}
+.plan-block-body{padding:10px 14px;border-top:1px solid var(--border);max-height:400px;overflow-y:auto}
+.plan-block-body .bubble-text{font-size:13px}
 /* ── Bubbles ── */
 .msg-row{display:flex;flex-direction:column;gap:4px}
 .msg-row.user{align-items:flex-end}
@@ -615,7 +635,7 @@ input{font:inherit;color:inherit}
 .bubble{max-width:72%;padding:10px 14px;border-radius:var(--radius);word-break:break-word;position:relative}
 .msg-row.user .bubble{background:var(--bubble-user);color:var(--bubble-user-text);border-bottom-right-radius:4px}
 .msg-row.assistant .bubble{background:var(--bubble-ai);color:var(--bubble-ai-text);border-bottom-left-radius:4px;box-shadow:var(--shadow)}
-.bubble-text{line-height:1.6;white-space:pre-wrap}
+.bubble-text{line-height:1.6;white-space:normal}
 .bubble-text p{margin:0 0 .6em}
 .bubble-text p:last-child{margin-bottom:0}
 .bubble-text code{background:rgba(0,0,0,.1);padding:1px 4px;border-radius:4px;font-size:.9em;font-family:'Cascadia Code','Fira Code',monospace}
@@ -623,7 +643,7 @@ input{font:inherit;color:inherit}
 .bubble-text pre{background:rgba(0,0,0,.12);padding:8px 10px;border-radius:8px;overflow-x:auto;margin:.4em 0}
 .msg-row.user .bubble-text pre{background:rgba(255,255,255,.15)}
 .bubble-text pre code{background:none;padding:0}
-.bubble-text h1,.bubble-text h2,.bubble-text h3{font-size:1em;font-weight:700;margin:.4em 0 .2em}
+.bubble-text h1{font-size:1.1em;font-weight:700;margin:.5em 0 .15em}.bubble-text h2{font-size:1.05em;font-weight:700;margin:.4em 0 .15em}.bubble-text h3{font-size:1em;font-weight:700;margin:.35em 0 .1em}.bubble-text h1:first-child,.bubble-text h2:first-child,.bubble-text h3:first-child{margin-top:.1em}
 .bubble-text ul,.bubble-text ol{padding-left:1.4em;margin:.3em 0}
 .bubble-text li{margin:.15em 0}
 .bubble-text strong{font-weight:700}
@@ -864,6 +884,19 @@ async function init() {
   renderProjects();
   populateSearchScope();
 
+  // open状態のプロジェクトのセッションを並列ロードして描画
+  await Promise.all([...S.openProjects].map(async projId => {
+    const sl = document.getElementById('sl-' + projId);
+    if (!sl) return;
+    const sessions = await api(`/api/sessions?project=${encodeURIComponent(projId)}`);
+    for (const s of sessions) {
+      s.meta = (S.meta.sessions || {})[`${projId}/${s.id}`] || s.meta || {};
+    }
+    sl.dataset.loaded = '1';
+    sl.dataset.sessions = JSON.stringify(sessions);
+    renderSessionList(sl, projId, S.sidebarFilter.toLowerCase());
+  }));
+
   // Restore last session
   const last = JSON.parse(localStorage.getItem('lastSession') || 'null');
   if (last) {
@@ -911,15 +944,13 @@ function renderProjects() {
   for (const proj of S.projects) {
     const open = S.openProjects.has(proj.id);
     const ph = el('div', 'proj-header' + (open ? ' open' : ''));
-    ph.innerHTML = `<span class="proj-caret">▶</span><span class="proj-name" title="${esc(proj.cwd)}">${esc(shortPath(proj.cwd))}</span><span class="proj-count">${proj.session_count}</span>`;
+    ph.innerHTML = `<span class="proj-caret">▶</span><span class="proj-icon">${open ? '📂' : '📁'}</span><span class="proj-name" title="${esc(proj.cwd)}">${esc(shortPath(proj.cwd))}</span><span class="proj-count">${proj.session_count}</span>`;
     ph.addEventListener('click', () => toggleProject(proj.id));
     container.appendChild(ph);
 
     const sl = el('div', 'session-list' + (open ? ' open' : ''));
     sl.id = 'sl-' + proj.id;
-    if (open) {
-      renderSessionList(sl, proj.id, filter);
-    }
+    // セッションデータは init() 内で非同期ロード後に描画するためここでは行わない
     container.appendChild(sl);
   }
 }
@@ -927,14 +958,17 @@ function renderProjects() {
 async function toggleProject(projId) {
   const sl = document.getElementById('sl-' + projId);
   const ph = sl.previousElementSibling;
+  const iconEl = ph.querySelector('.proj-icon');
   if (S.openProjects.has(projId)) {
     S.openProjects.delete(projId);
     sl.classList.remove('open');
     ph.classList.remove('open');
+    if (iconEl) iconEl.textContent = '📁';
   } else {
     S.openProjects.add(projId);
     sl.classList.add('open');
     ph.classList.add('open');
+    if (iconEl) iconEl.textContent = '📂';
     // Load sessions if not yet loaded
     if (!sl.dataset.loaded) {
       const sessions = await api(`/api/sessions?project=${encodeURIComponent(projId)}`);
@@ -1022,6 +1056,13 @@ function renderMessages(msgs) {
     container.innerHTML = '<div id="chat-empty"><div class="icon">🗒️</div><div>メッセージがありません</div></div>';
     return;
   }
+  // If first non-plan message is from assistant, prior context was compacted
+  const firstReal = msgs.find(m => !m.plan_content);
+  if (firstReal && firstReal.role === 'assistant') {
+    const notice = el('div', 'compaction-notice');
+    notice.innerHTML = '<span>〔以前の会話は省略されています〕</span>';
+    container.appendChild(notice);
+  }
   for (const msg of msgs) {
     const row = renderMessage(msg);
     if (row) container.appendChild(row);
@@ -1031,6 +1072,25 @@ function renderMessages(msgs) {
 }
 
 function renderMessage(msg) {
+  // Plan-mode injection: display as collapsible plan document, not a chat bubble
+  if (msg.plan_content) {
+    const row = el('div', 'msg-row');
+    row.dataset.uuid = msg.uuid;
+    const ts = el('div', `msg-ts${S.showTs ? '' : ' hidden'}`);
+    ts.textContent = fmtTime(msg.timestamp);
+    const details = document.createElement('details');
+    details.className = 'plan-block';
+    details.innerHTML = `<summary>📋 実装計画 (クリックで展開)</summary>`;
+    const body = el('div', 'plan-block-body');
+    const bodyText = el('div', 'bubble-text');
+    bodyText.innerHTML = renderMd(msg.plan_content);
+    body.appendChild(bodyText);
+    details.appendChild(body);
+    row.appendChild(ts);
+    row.appendChild(details);
+    return row;
+  }
+
   const row = el('div', `msg-row ${msg.role}`);
   row.dataset.uuid = msg.uuid;
 
@@ -1150,53 +1210,98 @@ function toolIcon(name) {
 // ── Markdown renderer ──
 function renderMd(text) {
   if (!text) return '';
-  // ① テーブルブロックを先に抽出してプレースホルダに置換（HTMLエスケープ前に行う）
-  const tables = [];
-  const lines = text.split('\n');
-  const outLines = [];
+
+  const saved = [];
+  const save = html => { const i = saved.length; saved.push(html); return `\x00${i}\x00`; };
+  const isSaved = s => /^\x00\d+\x00$/.test(s);
+
+  // Normalize line endings (\r\n → \n)
+  let s = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // ① テーブル・コードブロックを先に退避（内部の改行・HTMLを保護）
+  const rawLines = s.split('\n');
+  const out = [];
   let i = 0;
-  while (i < lines.length) {
-    if (i + 1 < lines.length
-        && /^\|.+\|/.test(lines[i])
-        && /^\|[\s|:\-]+\|/.test(lines[i + 1])) {
-      const tbl = [lines[i], lines[i + 1]];
-      i += 2;
-      while (i < lines.length && /^\|.+\|/.test(lines[i])) tbl.push(lines[i++]);
-      outLines.push(`\x02T${tables.length}\x03`);
-      tables.push(_renderTable(tbl));
+  while (i < rawLines.length) {
+    // テーブル
+    if (i + 1 < rawLines.length
+        && /^\|.+\|/.test(rawLines[i])
+        && /^\|[\s|:\-]+\|/.test(rawLines[i + 1])) {
+      const tbl = [rawLines[i], rawLines[i + 1]]; i += 2;
+      while (i < rawLines.length && /^\|.+\|/.test(rawLines[i])) tbl.push(rawLines[i++]);
+      out.push(save(_renderTable(tbl)));
     } else {
-      outLines.push(lines[i++]);
+      out.push(rawLines[i++]);
     }
   }
-  let s = outLines.join('\n');
-  // ② HTMLエスケープ
+  s = out.join('\n');
+
+  // ② コードブロックを退避（先にHTMLエスケープして \n を保護）
+  s = s.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, c) => save(
+    `<pre><code>${c.trimEnd().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`
+  ));
+
+  // ③ 残りをHTMLエスケープ（プレースホルダの \x00 は影響を受けない）
   s = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  // ③ コードブロック
-  s = s.replace(/```[\w]*\n?([\s\S]*?)```/g, (_,c) => `<pre><code>${c.trimEnd()}</code></pre>`);
-  // ④ インラインコード
-  s = s.replace(/`([^`\n]+)`/g, (_,c) => `<code>${c}</code>`);
-  // ⑤ Bold / Italic
+
+  // ④ インライン要素
+  s = s.replace(/`([^`\n]+)`/g, (_, c) => `<code>${c}</code>`);
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
   s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-  // ⑥ Headers
-  s = s.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  s = s.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  s = s.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  // ⑦ Lists
-  s = s.replace(/^[\*\-] (.+)$/gm, '<li>$1</li>');
-  s = s.replace(/(<li>.*<\/li>\n?)+/g, m => `<ul>${m}</ul>`);
-  s = s.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
-  // ⑧ 段落（テーブルプレースホルダは <p> で囲まない）
-  s = s.split(/\n\n+/).map(p => {
-    p = p.trim();
-    if (!p) return '';
-    if (/^\x02T\d+\x03$/.test(p)) return p;
-    return `<p>${p.replace(/\n/g,'<br>')}</p>`;
-  }).join('');
-  // ⑨ テーブルを復元
-  s = s.replace(/\x02T(\d+)\x03/g, (_, idx) => tables[+idx]);
-  return s;
+
+  // ⑤ 行単位でブロック要素を処理（見出し・リスト・段落を正しく分離）
+  const parts = [];
+  let paraLines = [];
+  let listItems = [];
+  let listOrdered = false;
+
+  const flushPara = () => {
+    const t = paraLines.join('<br>').trim();
+    if (t) parts.push(`<p>${t}</p>`);
+    paraLines = [];
+  };
+  const flushList = () => {
+    if (!listItems.length) return;
+    const tag = listOrdered ? 'ol' : 'ul';
+    parts.push(`<${tag}>${listItems.join('')}</${tag}>`);
+    listItems = [];
+  };
+
+  for (const line of s.split('\n')) {
+    const t = line.trim();
+    const h3 = t.match(/^### (.+)/), h2 = !h3 && t.match(/^## (.+)/), h1 = !h2 && !h3 && t.match(/^# (.+)/);
+    const ul = t.match(/^[\*\-] (.+)/);
+    const ol = t.match(/^\d+\. (.+)/);
+
+    if (h3 || h2 || h1) {
+      flushList(); flushPara();
+      parts.push(h3 ? `<h3>${h3[1]}</h3>` : h2 ? `<h2>${h2[1]}</h2>` : `<h1>${h1[1]}</h1>`);
+    } else if (isSaved(t)) {
+      flushList(); flushPara();
+      parts.push(t);
+    } else if (ul) {
+      flushPara();
+      if (listOrdered) flushList();
+      listOrdered = false;
+      listItems.push(`<li>${ul[1]}</li>`);
+    } else if (ol) {
+      flushPara();
+      if (!listOrdered) flushList();
+      listOrdered = true;
+      listItems.push(`<li>${ol[1]}</li>`);
+    } else if (!t) {
+      flushList(); flushPara();
+    } else {
+      flushList();
+      paraLines.push(t);
+    }
+  }
+  flushList();
+  flushPara();
+
+  // ⑥ プレースホルダ復元
+  return parts.join('').replace(/\x00(\d+)\x00/g, (_, i) => saved[+i]);
 }
 
 function _renderTable(lines) {
@@ -1579,14 +1684,14 @@ body{font-family:var(--font-family);font-size:var(--font-size);background:var(--
 .bubble{max-width:72%;padding:10px 14px;border-radius:var(--radius);word-break:break-word}
 .msg-row.user .bubble{background:var(--bubble-user);color:var(--bubble-user-text);border-bottom-right-radius:4px}
 .msg-row.assistant .bubble{background:var(--bubble-ai);color:var(--bubble-ai-text);border-bottom-left-radius:4px;box-shadow:var(--shadow)}
-.bubble-text{line-height:1.6;white-space:pre-wrap}
+.bubble-text{line-height:1.6;white-space:normal}
 .bubble-text p{margin:0 0 .6em}.bubble-text p:last-child{margin-bottom:0}
 .bubble-text code{background:rgba(0,0,0,.1);padding:1px 4px;border-radius:4px;font-size:.9em;font-family:monospace}
 .msg-row.user .bubble-text code{background:rgba(255,255,255,.2)}
 .bubble-text pre{background:rgba(0,0,0,.12);padding:8px 10px;border-radius:8px;overflow-x:auto;margin:.4em 0}
 .msg-row.user .bubble-text pre{background:rgba(255,255,255,.15)}
 .bubble-text pre code{background:none;padding:0}
-.bubble-text h1,.bubble-text h2,.bubble-text h3{font-size:1em;font-weight:700;margin:.4em 0 .2em}
+.bubble-text h1{font-size:1.1em;font-weight:700;margin:.5em 0 .15em}.bubble-text h2{font-size:1.05em;font-weight:700;margin:.4em 0 .15em}.bubble-text h3{font-size:1em;font-weight:700;margin:.35em 0 .1em}.bubble-text h1:first-child,.bubble-text h2:first-child,.bubble-text h3:first-child{margin-top:.1em}
 .bubble-text ul,.bubble-text ol{padding-left:1.4em;margin:.3em 0}
 .bubble-text strong{font-weight:700}
 .bubble-text em{font-style:italic}
