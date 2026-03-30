@@ -1129,12 +1129,13 @@ function renderMessage(msg) {
       collapseBtn.textContent = '▲ 折りたたむ';
       collapseBtn.addEventListener('click', () => {
         details.open = false;
-        bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        bubble.scrollIntoView({ block: 'start' });
       });
       details.appendChild(collapseBtn);
-      // 展開時はプレビューを隠す、閉じたら戻す
+      // 展開時はプレビューを隠してバブル先頭へ、閉じたら戻す
       details.addEventListener('toggle', () => {
         preview.style.display = details.open ? 'none' : '';
+        if (details.open) bubble.scrollIntoView({ block: 'start' });
       });
       bubble.appendChild(details);
     } else {
