@@ -1017,6 +1017,11 @@ async function loadSession(projId, sessionId) {
   S.currentSession = sessionId;
   localStorage.setItem('lastSession', JSON.stringify({project: projId, session: sessionId}));
 
+  // プロジェクトが閉じていたら開く
+  if (!S.openProjects.has(projId)) {
+    await toggleProject(projId);
+  }
+
   // Update sidebar active state
   document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('active'));
   const activeEl = document.querySelector(`.sess-item[data-sid="${sessionId}"]`);
@@ -1336,7 +1341,13 @@ function _renderTable(lines) {
 
 // ── Star / Memo ──
 async function toggleMessageStar(uuid, btn) {
-  const meta = { ...((S.meta.messages || {})[uuid] || {}), starred: !((S.meta.messages || {})[uuid] || {}).starred };
+  const existing = (S.meta.messages || {})[uuid] || {};
+  const meta = {
+    ...existing,
+    starred: !existing.starred,
+    project_id: existing.project_id || S.currentProject,
+    session_id: existing.session_id || S.currentSession,
+  };
   await post('/api/meta/message', { uuid, meta });
   S.meta.messages = S.meta.messages || {};
   S.meta.messages[uuid] = meta;
@@ -1370,9 +1381,15 @@ async function saveMemo() {
     // Re-render session list
     refreshSessionMeta(key, newMeta);
   } else {
-    await post('/api/meta/message', { uuid: key, meta: newMeta });
+    const existingMsg = (S.meta.messages || {})[key] || {};
+    const msgMeta = {
+      ...newMeta,
+      project_id: existingMsg.project_id || S.currentProject,
+      session_id: existingMsg.session_id || S.currentSession,
+    };
+    await post('/api/meta/message', { uuid: key, meta: msgMeta });
     S.meta.messages = S.meta.messages || {};
-    S.meta.messages[key] = newMeta;
+    S.meta.messages[key] = msgMeta;
   }
   document.getElementById('memo-modal').classList.remove('open');
 }
@@ -1494,10 +1511,22 @@ async function openStarredPanel() {
     body.appendChild(h);
     for (const m of starred.messages) {
       const item = el('div', 'starred-item');
+      const canNav = m.project_id && m.session_id;
       item.innerHTML = `
-        <div class="starred-item-title">⭐ ${esc(m.uuid.slice(0,8))}…</div>
-        ${m.memo ? `<div class="starred-item-meta">📝 ${esc(m.memo)}</div>` : ''}
+        <div class="starred-item-title">⭐ ${esc(m.memo || m.uuid.slice(0,8) + '…')}</div>
+        ${m.session_id ? `<div class="starred-item-meta">📁 ${esc(m.session_id.slice(0,8))}…</div>` : ''}
+        ${!canNav ? '<div class="starred-item-meta" style="opacity:.6">※ 再スターで位置を記録できます</div>' : ''}
       `;
+      if (canNav) {
+        item.addEventListener('click', async () => {
+          document.getElementById('starred-panel').classList.remove('open');
+          await loadSession(m.project_id, m.session_id);
+          setTimeout(() => {
+            const target = document.querySelector(`[data-uuid="${m.uuid}"]`);
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 100);
+        });
+      }
       body.appendChild(item);
     }
   }
