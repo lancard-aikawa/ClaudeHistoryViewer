@@ -1,5 +1,5 @@
 {
-  "port": 8080,
+  "port": 57080,
   "auto_open_browser": true,
 
   "collapse_lines": 15,
