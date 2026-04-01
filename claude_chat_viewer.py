@@ -452,6 +452,19 @@ def make_handler(reader: ClaudeDataReader, meta: MetaStore, cfg: dict):
                 self._json(results)
             elif path == "/api/starred":
                 self._json(meta.get_starred())
+            elif path == "/api/open-folder":
+                folder = qs.get("path", [""])[0]
+                if folder and Path(folder).is_dir():
+                    import subprocess
+                    if sys.platform == "win32":
+                        subprocess.Popen(["explorer", folder])
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", folder])
+                    else:
+                        subprocess.Popen(["xdg-open", folder])
+                    self._json({"ok": True})
+                else:
+                    self._json({"ok": False})
             elif path == "/api/meta":
                 self._json(meta.get_all())
             elif path == "/api/settings":
@@ -605,6 +618,9 @@ input{font:inherit;color:inherit}
 .proj-icon{font-size:13px;flex-shrink:0}
 .proj-name{font-weight:700;font-size:12px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.01em}
 .proj-name-edit{font-weight:700;font-size:12px;flex:1;border:none;border-bottom:1px solid var(--accent);background:transparent;color:var(--text);outline:none;padding:0;min-width:0}
+.proj-open-btn{font-size:11px;opacity:0;padding:1px 4px;border-radius:4px;color:var(--text-muted);transition:opacity .15s;flex-shrink:0}
+.proj-header:hover .proj-open-btn{opacity:.7}
+.proj-open-btn:hover{opacity:1!important;background:var(--session-hover)}
 .proj-count{font-size:10px;color:var(--text-muted);background:var(--chip-bg);padding:1px 6px;border-radius:8px;flex-shrink:0}
 .session-list{display:none;padding:4px 8px 8px 20px;border-left:2px solid var(--border);margin:0 0 4px 18px}
 .session-list.open{display:block}
@@ -962,6 +978,15 @@ function renderProjects() {
     ph.innerHTML = `<span class="proj-caret">▶</span><span class="proj-icon">${open ? '📂' : '📁'}</span>`;
     ph.appendChild(nameSpan);
     ph.innerHTML += `<span class="proj-count">${proj.session_count}</span>`;
+    // フォルダを開くボタン
+    const openBtn = el('button', 'proj-open-btn');
+    openBtn.textContent = '📂';
+    openBtn.title = proj.cwd;
+    openBtn.addEventListener('click', async e => {
+      e.stopPropagation();
+      await fetch(`/api/open-folder?path=${encodeURIComponent(proj.cwd)}`);
+    });
+    ph.appendChild(openBtn);
     // ダブルクリックでラベル編集
     nameSpan.addEventListener('dblclick', e => {
       e.stopPropagation();
