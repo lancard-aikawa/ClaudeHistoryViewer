@@ -1,3 +1,5 @@
 sandbox/
 +.log
 settings.json
+__pycache__/
+*.pyc
