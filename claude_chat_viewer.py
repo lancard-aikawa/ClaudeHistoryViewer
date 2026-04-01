@@ -219,6 +219,11 @@ class MetaStore:
         d.setdefault("messages", {})[uuid] = meta
         self._save()
 
+    def set_project(self, project_id: str, meta: dict):
+        d = self._load()
+        d.setdefault("projects", {})[project_id] = meta
+        self._save()
+
     def get_starred(self) -> dict:
         d = self._load()
         sessions = [
@@ -474,6 +479,9 @@ def make_handler(reader: ClaudeDataReader, meta: MetaStore, cfg: dict):
             elif path == "/api/meta/message":
                 meta.set_message(data["uuid"], data["meta"])
                 self._json({"ok": True})
+            elif path == "/api/meta/project":
+                meta.set_project(data["project_id"], data["meta"])
+                self._json({"ok": True})
             else:
                 self._send(404, "text/plain", b"Not Found")
 
@@ -596,6 +604,7 @@ input{font:inherit;color:inherit}
 .proj-header.open .proj-caret{transform:rotate(90deg)}
 .proj-icon{font-size:13px;flex-shrink:0}
 .proj-name{font-weight:700;font-size:12px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.01em}
+.proj-name-edit{font-weight:700;font-size:12px;flex:1;border:none;border-bottom:1px solid var(--accent);background:transparent;color:var(--text);outline:none;padding:0;min-width:0}
 .proj-count{font-size:10px;color:var(--text-muted);background:var(--chip-bg);padding:1px 6px;border-radius:8px;flex-shrink:0}
 .session-list{display:none;padding:4px 8px 8px 20px;border-left:2px solid var(--border);margin:0 0 4px 18px}
 .session-list.open{display:block}
@@ -943,8 +952,40 @@ function renderProjects() {
   container.innerHTML = '';
   for (const proj of S.projects) {
     const open = S.openProjects.has(proj.id);
+    const projMeta = (S.meta.projects || {})[proj.id] || {};
+    const label = projMeta.label || shortPath(proj.cwd);
     const ph = el('div', 'proj-header' + (open ? ' open' : ''));
-    ph.innerHTML = `<span class="proj-caret">▶</span><span class="proj-icon">${open ? '📂' : '📁'}</span><span class="proj-name" title="${esc(proj.cwd)}">${esc(shortPath(proj.cwd))}</span><span class="proj-count">${proj.session_count}</span>`;
+    ph.dataset.projId = proj.id;
+    const nameSpan = el('span', 'proj-name');
+    nameSpan.title = proj.cwd;
+    nameSpan.textContent = label;
+    ph.innerHTML = `<span class="proj-caret">▶</span><span class="proj-icon">${open ? '📂' : '📁'}</span>`;
+    ph.appendChild(nameSpan);
+    ph.innerHTML += `<span class="proj-count">${proj.session_count}</span>`;
+    // ダブルクリックでラベル編集
+    nameSpan.addEventListener('dblclick', e => {
+      e.stopPropagation();
+      const input = el('input', 'proj-name-edit');
+      input.value = projMeta.label || '';
+      input.placeholder = shortPath(proj.cwd);
+      nameSpan.replaceWith(input);
+      input.focus();
+      input.select();
+      const commit = async () => {
+        const newLabel = input.value.trim();
+        const newMeta = { ...projMeta, label: newLabel || null };
+        if (!newLabel) delete newMeta.label;
+        await post('/api/meta/project', { project_id: proj.id, meta: newMeta });
+        S.meta.projects = S.meta.projects || {};
+        S.meta.projects[proj.id] = newMeta;
+        renderProjects();
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { input.removeEventListener('blur', commit); input.replaceWith(nameSpan); }
+      });
+    });
     ph.addEventListener('click', () => toggleProject(proj.id));
     container.appendChild(ph);
 
@@ -1434,7 +1475,8 @@ function populateSearchScope() {
   for (const proj of S.projects) {
     const opt = document.createElement('option');
     opt.value = proj.id;
-    opt.textContent = shortPath(proj.cwd);
+    const projMeta = (S.meta.projects || {})[proj.id] || {};
+    opt.textContent = projMeta.label || shortPath(proj.cwd);
     sel.appendChild(opt);
   }
 }

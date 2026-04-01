@@ -81,7 +81,7 @@ Copy-Item settings.json.sample settings.json
 python claude_chat_viewer.py
 ```
 
-起動後、自動でブラウザが開きます（`http://localhost:8080`）。
+起動後、自動でブラウザが開きます（`http://localhost:57080`）。
 
 ### オプション
 
@@ -100,7 +100,7 @@ python claude_chat_viewer.py --claude-dir /custom/path/.claude
 
 ```bash
 python claude_chat_viewer.py --no-browser
-# → http://localhost:8080 をブラウザで手動アクセス
+# → http://localhost:57080 をブラウザで手動アクセス
 ```
 
 ---
@@ -155,7 +155,7 @@ python claude_chat_viewer.py --no-browser
 
 ```jsonc
 {
-  "port": 8080,               // ポート番号
+  "port": 57080,               // ポート番号
   "auto_open_browser": true,  // 起動時にブラウザを自動で開く
 
   "collapse_lines": 15,       // これ以上の行数で本文を折りたたむ
