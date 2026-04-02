@@ -744,13 +744,17 @@ input{font:inherit;color:inherit}
 #search-type{padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--search-bg);font-size:13px;color:var(--text)}
 #search-scope{padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--search-bg);font-size:13px;color:var(--text)}
 #search-results{overflow-y:auto;flex:1;padding:8px}
-.sr-item{padding:10px 12px;border-radius:8px;cursor:pointer;border-bottom:1px solid var(--border)}
-.sr-item:last-child{border-bottom:none}
+.sr-empty{padding:20px;text-align:center;color:var(--text-muted);font-size:13px}
+/* 階層構造 */
+.sr-proj{margin-bottom:10px}
+.sr-proj-header{font-size:11px;font-weight:700;color:var(--accent);padding:4px 6px;border-radius:6px;background:var(--chip-bg);margin-bottom:4px;display:flex;align-items:center;gap:5px}
+.sr-sess{margin-left:10px;margin-bottom:6px;border-left:2px solid var(--border);padding-left:8px}
+.sr-sess-header{font-size:11px;font-weight:600;color:var(--text-muted);padding:2px 0 4px;cursor:pointer}
+.sr-sess-header:hover{color:var(--accent)}
+.sr-item{padding:7px 10px;border-radius:6px;cursor:pointer;margin-bottom:2px}
 .sr-item:hover{background:var(--session-hover)}
-.sr-session{font-size:11px;color:var(--accent);font-weight:600;margin-bottom:3px}
 .sr-snippet{font-size:13px;color:var(--text);line-height:1.5}
 .sr-role{font-size:10px;color:var(--text-muted);margin-top:2px}
-.sr-empty{padding:20px;text-align:center;color:var(--text-muted);font-size:13px}
 /* ── Starred panel ── */
 #starred-panel{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-start;justify-content:center;padding-top:60px;background:rgba(0,0,0,.4);display:none}
 #starred-panel.open{display:flex}
@@ -1617,23 +1621,52 @@ async function runSearch() {
     return;
   }
   resultsEl.innerHTML = '';
+  // プロジェクト → セッション → メッセージ の順に階層化
+  const tree = {};
   for (const r of results) {
-    const item = el('div', 'sr-item');
-    item.innerHTML = `
-      <div class="sr-session">📁 ${esc(r.session_title || r.session_id)}</div>
-      <div class="sr-snippet">${esc(r.snippet)}</div>
-      <div class="sr-role">${r.role === 'user' ? '👤 あなた' : '🤖 Claude'} · ${fmtTime(r.timestamp)}</div>
-    `;
-    item.addEventListener('click', async () => {
-      document.getElementById('search-panel').classList.remove('open');
-      await loadSession(r.project_id, r.session_id);
-      // Scroll to message
-      setTimeout(() => {
-        const msgEl = document.querySelector(`.msg-row[data-uuid="${r.uuid}"]`);
-        if (msgEl) { msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); msgEl.style.outline = '2px solid var(--accent)'; setTimeout(() => msgEl.style.outline = '', 2000); }
-      }, 300);
-    });
-    resultsEl.appendChild(item);
+    const pk = r.project_id;
+    const sk = r.session_id;
+    if (!tree[pk]) tree[pk] = { sessions: {} };
+    if (!tree[pk].sessions[sk]) tree[pk].sessions[sk] = { title: r.session_title || r.session_id, hits: [] };
+    tree[pk].sessions[sk].hits.push(r);
+  }
+  for (const [projId, proj] of Object.entries(tree)) {
+    const projMeta = (S.meta.projects || {})[projId] || {};
+    const projLabel = projMeta.label || shortPath((S.projects.find(p => p.id === projId) || {}).cwd || projId);
+    const sessCount = Object.keys(proj.sessions).length;
+    const hitCount  = Object.values(proj.sessions).reduce((s, x) => s + x.hits.length, 0);
+    const projDiv = el('div', 'sr-proj');
+    const ph = el('div', 'sr-proj-header');
+    ph.innerHTML = `📁 ${esc(projLabel)} <span style="opacity:.6;font-weight:400">${sessCount}セッション · ${hitCount}件</span>`;
+    projDiv.appendChild(ph);
+    for (const [sessId, sess] of Object.entries(proj.sessions)) {
+      const sessDiv = el('div', 'sr-sess');
+      const sh = el('div', 'sr-sess-header');
+      sh.textContent = `📄 ${sess.title}  (${sess.hits.length}件)`;
+      sh.addEventListener('click', async () => {
+        document.getElementById('search-panel').classList.remove('open');
+        await loadSession(projId, sessId);
+      });
+      sessDiv.appendChild(sh);
+      for (const r of sess.hits) {
+        const item = el('div', 'sr-item');
+        item.innerHTML = `
+          <div class="sr-snippet">${esc(r.snippet)}</div>
+          <div class="sr-role">${r.role === 'user' ? '👤 あなた' : '🤖 Claude'} · ${fmtTime(r.timestamp)}</div>
+        `;
+        item.addEventListener('click', async () => {
+          document.getElementById('search-panel').classList.remove('open');
+          await loadSession(r.project_id, r.session_id);
+          setTimeout(() => {
+            const msgEl = document.querySelector(`.msg-row[data-uuid="${r.uuid}"]`);
+            if (msgEl) { msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); msgEl.style.outline = '2px solid var(--accent)'; setTimeout(() => msgEl.style.outline = '', 2000); }
+          }, 300);
+        });
+        sessDiv.appendChild(item);
+      }
+      projDiv.appendChild(sessDiv);
+    }
+    resultsEl.appendChild(projDiv);
   }
 }
 
