@@ -68,13 +68,14 @@ class ClaudeDataReader:
         for proj_dir in self.projects_dir.iterdir():
             if not proj_dir.is_dir():
                 continue
-            cwd, last_ts, session_count = self._project_summary(proj_dir)
+            cwd, first_ts, last_ts, session_count = self._project_summary(proj_dir)
             if session_count == 0:
                 continue
             projects.append({
                 "id": proj_dir.name,
                 "cwd": cwd or proj_dir.name,
                 "session_count": session_count,
+                "first_activity": first_ts,
                 "last_activity": last_ts,
             })
         projects.sort(key=lambda x: x["last_activity"] or "", reverse=True)
@@ -82,18 +83,22 @@ class ClaudeDataReader:
 
     def _project_summary(self, proj_dir: Path):
         cwd = None
+        first_ts = None
         last_ts = None
         session_count = 0
         for f in proj_dir.glob("*.jsonl"):
             if not _is_session_file(f.stem):
                 continue
             session_count += 1
-            mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc).isoformat()
-            if last_ts is None or mtime > last_ts:
-                last_ts = mtime
+            _, ts, _ = _read_session_meta(f)
+            if ts:
+                if first_ts is None or ts < first_ts:
+                    first_ts = ts
+                if last_ts is None or ts > last_ts:
+                    last_ts = ts
             if cwd is None:
                 cwd = _read_cwd(f)
-        return cwd, last_ts, session_count
+        return cwd, first_ts, last_ts, session_count
 
     # ---- Sessions ----
 
@@ -628,8 +633,14 @@ input{font:inherit;color:inherit}
 .proj-caret{font-size:10px;transition:transform .15s;display:inline-block;color:var(--text-muted);flex-shrink:0}
 .proj-header.open .proj-caret{transform:rotate(90deg)}
 .proj-icon{font-size:13px;flex-shrink:0}
-.proj-name{font-weight:700;font-size:12px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.01em}
+.proj-name{font-weight:700;font-size:12px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.01em;display:flex;align-items:center;gap:3px}
+.proj-badge{font-size:10px;flex-shrink:0}
 .proj-name-edit{font-weight:700;font-size:12px;flex:1;border:none;border-bottom:1px solid var(--accent);background:transparent;color:var(--text);outline:none;padding:0;min-width:0}
+/* Context menu */
+#ctx-menu{position:fixed;z-index:500;background:var(--sidebar-bg);border:1px solid var(--border);border-radius:8px;padding:4px 0;box-shadow:0 4px 16px rgba(0,0,0,.2);min-width:160px;display:none}
+#ctx-menu.open{display:block}
+.ctx-item{padding:7px 14px;font-size:13px;cursor:pointer;white-space:nowrap}
+.ctx-item:hover{background:var(--session-hover)}
 .proj-open-btn{font-size:14px;font-weight:700;opacity:0;padding:2px 5px;border-radius:4px;color:var(--accent);transition:opacity .15s,background .15s;flex-shrink:0;cursor:alias;line-height:1}
 .proj-header:hover .proj-open-btn{opacity:.8}
 .proj-open-btn:hover{opacity:1!important;background:rgba(99,102,241,.15)}
@@ -850,6 +861,14 @@ input{font:inherit;color:inherit}
   </div>
 </div>
 
+<!-- Context menu -->
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-star">☆ スター</div>
+  <div class="ctx-item" id="ctx-memo">📝 メモ・タグ</div>
+  <div class="ctx-item" id="ctx-label">✏️ ラベルを編集</div>
+  <div class="ctx-item" id="ctx-open-folder">⧉ フォルダを開く</div>
+</div>
+
 <!-- Starred panel -->
 <div id="starred-panel">
   <div id="starred-box">
@@ -984,13 +1003,22 @@ function renderProjects() {
     const label = projMeta.label || shortPath(proj.cwd);
     const ph = el('div', 'proj-header' + (open ? ' open' : ''));
     ph.dataset.projId = proj.id;
+    // ヘッダー要素を個別に構築（innerHTML+= はイベントリスナーを破壊するため使わない）
+    const caret = el('span', 'proj-caret'); caret.textContent = '▶';
+    const icon  = el('span', 'proj-icon');  icon.textContent  = open ? '📂' : '📁';
     const nameSpan = el('span', 'proj-name');
-    nameSpan.title = proj.cwd;
+    // ツールチップ：パス・メモ・日付範囲
+    const firstDate = proj.first_activity ? fmtDate(proj.first_activity) : '?';
+    const lastDate  = proj.last_activity  ? fmtDate(proj.last_activity)  : '?';
+    const dateRange = firstDate === lastDate ? firstDate : `${firstDate} ～ ${lastDate}`;
+    let titleLines = [proj.cwd, `📅 ${dateRange}`];
+    if (projMeta.memo) titleLines.push(`📝 ${projMeta.memo}`);
+    nameSpan.title = titleLines.join('\n');
     nameSpan.textContent = label;
-    ph.innerHTML = `<span class="proj-caret">▶</span><span class="proj-icon">${open ? '📂' : '📁'}</span>`;
-    ph.appendChild(nameSpan);
-    ph.innerHTML += `<span class="proj-count">${proj.session_count}</span>`;
-    // フォルダを開くボタン
+    // スター・メモバッジ
+    if (projMeta.starred) { const b = el('span','proj-badge'); b.textContent='⭐'; nameSpan.appendChild(b); }
+    if (projMeta.memo)    { const b = el('span','proj-badge'); b.textContent='📝'; nameSpan.appendChild(b); }
+    const count = el('span', 'proj-count'); count.textContent = proj.session_count;
     const openBtn = el('button', 'proj-open-btn');
     openBtn.textContent = '⧉';
     openBtn.title = `フォルダを開く\n${proj.cwd}`;
@@ -998,32 +1026,17 @@ function renderProjects() {
       e.stopPropagation();
       await fetch(`/api/open-folder?path=${encodeURIComponent(proj.cwd)}`);
     });
+    ph.appendChild(caret);
+    ph.appendChild(icon);
+    ph.appendChild(nameSpan);
+    ph.appendChild(count);
     ph.appendChild(openBtn);
-    // ダブルクリックでラベル編集
-    nameSpan.addEventListener('dblclick', e => {
-      e.stopPropagation();
-      const input = el('input', 'proj-name-edit');
-      input.value = projMeta.label || '';
-      input.placeholder = shortPath(proj.cwd);
-      nameSpan.replaceWith(input);
-      input.focus();
-      input.select();
-      const commit = async () => {
-        const newLabel = input.value.trim();
-        const newMeta = { ...projMeta, label: newLabel || null };
-        if (!newLabel) delete newMeta.label;
-        await post('/api/meta/project', { project_id: proj.id, meta: newMeta });
-        S.meta.projects = S.meta.projects || {};
-        S.meta.projects[proj.id] = newMeta;
-        renderProjects();
-      };
-      input.addEventListener('blur', commit);
-      input.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-        if (e.key === 'Escape') { input.removeEventListener('blur', commit); input.replaceWith(nameSpan); }
-      });
-    });
     ph.addEventListener('click', () => toggleProject(proj.id));
+    // 右クリックでコンテキストメニュー
+    ph.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      openProjContextMenu(e, proj.id, proj.cwd, projMeta, nameSpan);
+    });
     container.appendChild(ph);
 
     const sl = el('div', 'session-list' + (open ? ' open' : ''));
@@ -1448,10 +1461,16 @@ async function saveMemo() {
   const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
   const existingMeta = type === 'session'
     ? (S.meta.sessions || {})[key] || {}
+    : type === 'project'
+    ? (S.meta.projects || {})[key] || {}
     : (S.meta.messages || {})[key] || {};
   const newMeta = { ...existingMeta, memo, tags };
 
-  if (type === 'session') {
+  if (type === 'project') {
+    await post('/api/meta/project', { project_id: key, meta: newMeta });
+    S.meta.projects = S.meta.projects || {};
+    S.meta.projects[key] = newMeta;
+  } else if (type === 'session') {
     const [projId, sessId] = key.split('/', 2);
     // If key is already "projId/sessId" format:
     await post('/api/meta/session', { project_id: projId, session_id: sessId, meta: newMeta });
@@ -1472,6 +1491,64 @@ async function saveMemo() {
   }
   document.getElementById('memo-modal').classList.remove('open');
 }
+
+// ── Project context menu ──
+let _ctxProjId = null, _ctxProjCwd = null, _ctxProjMeta = null, _ctxNameSpan = null;
+function openProjContextMenu(e, projId, cwd, projMeta, nameSpan) {
+  _ctxProjId = projId; _ctxProjCwd = cwd; _ctxProjMeta = projMeta; _ctxNameSpan = nameSpan;
+  document.getElementById('ctx-star').textContent = projMeta.starred ? '⭐ スターを外す' : '☆ スター';
+  const menu = document.getElementById('ctx-menu');
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
+  menu.style.top  = Math.min(e.clientY, window.innerHeight - 80) + 'px';
+  menu.classList.add('open');
+}
+function closeProjContextMenu() {
+  document.getElementById('ctx-menu').classList.remove('open');
+}
+document.getElementById('ctx-star').addEventListener('click', async () => {
+  closeProjContextMenu();
+  const newMeta = { ..._ctxProjMeta, starred: !_ctxProjMeta.starred };
+  await post('/api/meta/project', { project_id: _ctxProjId, meta: newMeta });
+  S.meta.projects = S.meta.projects || {};
+  S.meta.projects[_ctxProjId] = newMeta;
+  renderProjects();
+});
+document.getElementById('ctx-memo').addEventListener('click', () => {
+  closeProjContextMenu();
+  openMemo('project', _ctxProjId, _ctxProjMeta);
+});
+document.getElementById('ctx-label').addEventListener('click', () => {
+  closeProjContextMenu();
+  const nameSpan = _ctxNameSpan;
+  const projId = _ctxProjId, projMeta = _ctxProjMeta;
+  const input = el('input', 'proj-name-edit');
+  input.value = projMeta.label || shortPath(_ctxProjCwd);
+  input.placeholder = shortPath(_ctxProjCwd);
+  nameSpan.replaceWith(input);
+  input.focus(); input.select();
+  const commit = async () => {
+    const newLabel = input.value.trim();
+    const newMeta = { ...projMeta };
+    if (newLabel) newMeta.label = newLabel; else delete newMeta.label;
+    await post('/api/meta/project', { project_id: projId, meta: newMeta });
+    S.meta.projects = S.meta.projects || {};
+    S.meta.projects[projId] = newMeta;
+    renderProjects();
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter')  { ev.preventDefault(); input.blur(); }
+    if (ev.key === 'Escape') { input.removeEventListener('blur', commit); input.replaceWith(nameSpan); }
+  });
+});
+document.getElementById('ctx-open-folder').addEventListener('click', async () => {
+  closeProjContextMenu();
+  await fetch(`/api/open-folder?path=${encodeURIComponent(_ctxProjCwd)}`);
+});
+document.addEventListener('click', e => {
+  if (!document.getElementById('ctx-menu').contains(e.target)) closeProjContextMenu();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProjContextMenu(); });
 
 function refreshSessionMeta(key, newMeta) {
   const [projId, sessId] = key.split('/', 2);
