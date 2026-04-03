@@ -269,7 +269,7 @@ class ClaudeDataReader:
 
     # ---- Search ----
 
-    def search(self, query: str, project_id: str = None, search_type: str = "text") -> list:
+    def search(self, query: str, project_id: str = None, search_type: str = "text", max_results: int = 300) -> list:
         q = query.lower()
         results = []
 
@@ -304,6 +304,6 @@ class ClaudeDataReader:
                 for h in hits:
                     h["session_title"] = title
                     results.append(h)
-                if len(results) >= 300:
+                if len(results) >= max_results:
                     return results
         return results

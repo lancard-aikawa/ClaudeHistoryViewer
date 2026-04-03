@@ -10,6 +10,8 @@ from .template import HTML_TEMPLATE
 
 
 def make_handler(reader, meta, cfg):
+    _origin = f"http://localhost:{cfg['port']}"
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             pass  # suppress default logs
@@ -44,7 +46,7 @@ def make_handler(reader, meta, cfg):
                 q = qs.get("q", [""])[0]
                 pid = qs.get("project", [""])[0] or None
                 stype = qs.get("type", ["text"])[0]
-                results = reader.search(q, pid, stype) if q else []
+                results = reader.search(q, pid, stype, cfg.get("max_search_results", 300)) if q else []
                 self._json(results)
             elif path == "/api/starred":
                 self._json(meta.get_starred())
@@ -107,7 +109,7 @@ def make_handler(reader, meta, cfg):
 
         def do_OPTIONS(self):
             self.send_response(200)
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Origin", _origin)
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
@@ -120,7 +122,7 @@ def make_handler(reader, meta, cfg):
             self.send_response(code)
             self.send_header("Content-Type", ct)
             self.send_header("Content-Length", len(body))
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Origin", _origin)
             self.end_headers()
             self.wfile.write(body)
 

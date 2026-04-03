@@ -2,14 +2,14 @@ import json
 import sys
 from pathlib import Path
 
-DEFAULT_PORT = 8080
+DEFAULT_PORT = 57080
 DEFAULT_CLAUDE_DIR = Path.home() / ".claude"
 META_FILENAME = "chat-viewer-meta.json"
 SETTINGS_FILE = Path(__file__).parent.parent / "settings.json"
 
 SETTINGS_DEFAULTS: dict = {
     # ── 起動設定（再起動後に反映） ──────────────────
-    "port": 8080,                 # ポート番号
+    "port": 57080,                # ポート番号
     "auto_open_browser": True,    # 起動時にブラウザを自動で開く
 
     # ── 表示設定（再起動後に反映） ──────────────────

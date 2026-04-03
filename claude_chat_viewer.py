@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Claude History Viewer - LINEライクな Claude Code セッションビューア
-Usage: python claude_chat_viewer.py [--port 8080] [--claude-dir ~/.claude]
+Usage: python claude_chat_viewer.py [--port 57080] [--claude-dir ~/.claude]
 """
 
 import argparse
