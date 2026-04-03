@@ -96,10 +96,21 @@ input{font:inherit;color:inherit}
 .proj-badge{font-size:10px;flex-shrink:0}
 .proj-name-edit{font-weight:700;font-size:12px;flex:1;border:none;border-bottom:1px solid var(--accent);background:transparent;color:var(--text);outline:none;padding:0;min-width:0}
 /* Context menu */
-#ctx-menu{position:fixed;z-index:500;background:var(--sidebar-bg);border:1px solid var(--border);border-radius:8px;padding:4px 0;box-shadow:0 4px 16px rgba(0,0,0,.2);min-width:160px;display:none}
-#ctx-menu.open{display:block}
+#ctx-menu,#sess-ctx-menu{position:fixed;z-index:500;background:var(--sidebar-bg);border:1px solid var(--border);border-radius:8px;padding:4px 0;box-shadow:0 4px 16px rgba(0,0,0,.2);min-width:160px;display:none}
+#ctx-menu.open,#sess-ctx-menu.open{display:block}
 .ctx-item{padding:7px 14px;font-size:13px;cursor:pointer;white-space:nowrap}
 .ctx-item:hover{background:var(--session-hover)}
+.ctx-sep{height:1px;background:var(--border);margin:3px 0}
+.proj-hidden{opacity:.4}
+.sess-hidden{opacity:.4}
+#btn-show-hidden.active{color:var(--accent);opacity:1}
+#help-modal{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5);display:none}
+#help-modal.open{display:flex}
+#help-box{background:var(--sidebar-bg);border-radius:12px;padding:20px 24px;min-width:320px;max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+#help-box h3{margin-bottom:14px;font-size:15px}
+.help-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:13px;border-bottom:1px solid var(--border)}
+.help-row:last-child{border-bottom:none}
+.help-key{font-family:monospace;background:var(--chip-bg);padding:2px 7px;border-radius:5px;font-size:12px;color:var(--text-muted)}
 .proj-open-btn{font-size:14px;font-weight:700;opacity:0;padding:2px 5px;border-radius:4px;color:var(--accent);transition:opacity .15s,background .15s;flex-shrink:0;cursor:alias;line-height:1}
 .proj-header:hover .proj-open-btn{opacity:.8}
 .proj-open-btn:hover{opacity:1!important;background:rgba(99,102,241,.15)}
@@ -286,6 +297,7 @@ input{font:inherit;color:inherit}
       <option value="courier-new">Courier New</option>
       <option value="system">System UI</option>
     </select>
+    <button class="hbtn" id="btn-help" title="キーボードショートカット (?)">?</button>
   </div>
 
   <div id="main">
@@ -293,6 +305,7 @@ input{font:inherit;color:inherit}
     <div id="sidebar">
       <div id="sidebar-header">
         <input id="sidebar-search" type="text" placeholder="セッション名・タグで絞り込み…" />
+        <button class="tbtn" id="btn-show-hidden" title="非表示項目を表示" style="font-size:13px;margin-top:4px;width:100%;text-align:left;padding:3px 8px">👁 非表示を表示</button>
       </div>
       <div id="project-list"></div>
     </div>
@@ -347,12 +360,19 @@ input{font:inherit;color:inherit}
   </div>
 </div>
 
-<!-- Context menu -->
+<!-- Project context menu -->
 <div id="ctx-menu">
   <div class="ctx-item" id="ctx-star">☆ スター</div>
   <div class="ctx-item" id="ctx-memo">📝 メモ・タグ</div>
   <div class="ctx-item" id="ctx-label">✏️ ラベルを編集</div>
   <div class="ctx-item" id="ctx-open-folder">⧉ フォルダを開く</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-hide">🙈 非表示にする</div>
+</div>
+
+<!-- Session context menu -->
+<div id="sess-ctx-menu">
+  <div class="ctx-item" id="sess-ctx-hide">🙈 非表示にする</div>
 </div>
 
 <!-- Starred panel -->
@@ -382,6 +402,19 @@ input{font:inherit;color:inherit}
 <!-- Lightbox -->
 <div id="lightbox"><img id="lightbox-img" src="" alt=""></div>
 
+<!-- Help modal -->
+<div id="help-modal">
+  <div id="help-box">
+    <h3>⌨️ キーボードショートカット</h3>
+    <div class="help-row"><span>検索パネルを開く</span><span class="help-key">Ctrl + K</span></div>
+    <div class="help-row"><span>前のセッションへ</span><span class="help-key">←</span></div>
+    <div class="help-row"><span>次のセッションへ</span><span class="help-key">→</span></div>
+    <div class="help-row"><span>パネルを閉じる</span><span class="help-key">Escape</span></div>
+    <div class="help-row"><span>このヘルプを閉じる</span><span class="help-key">?</span></div>
+    <div style="margin-top:14px;text-align:right"><button class="btn btn-ghost" id="btn-help-close">閉じる</button></div>
+  </div>
+</div>
+
 <script>
 // ── State ──
 const S = {
@@ -397,6 +430,7 @@ const S = {
   openProjects: new Set(JSON.parse(localStorage.getItem('openProjects') || '[]')),
   memoTarget: null, // { type: 'session'|'message', key, current }
   sidebarFilter: '',
+  showHidden: false,
   cfg: { collapse_lines:15, collapse_chars:600, preview_chars:300, show_thinking:true, show_tool_chips:true },
 };
 
@@ -486,8 +520,9 @@ function renderProjects() {
   for (const proj of S.projects) {
     const open = S.openProjects.has(proj.id);
     const projMeta = (S.meta.projects || {})[proj.id] || {};
+    if (projMeta.hidden && !S.showHidden) continue;
     const label = projMeta.label || shortPath(proj.cwd);
-    const ph = el('div', 'proj-header' + (open ? ' open' : ''));
+    const ph = el('div', 'proj-header' + (open ? ' open' : '') + (projMeta.hidden ? ' proj-hidden' : ''));
     ph.dataset.projId = proj.id;
     // ヘッダー要素を個別に構築（innerHTML+= はイベントリスナーを破壊するため使わない）
     const caret = el('span', 'proj-caret'); caret.textContent = '▶';
@@ -565,13 +600,14 @@ async function toggleProject(projId) {
 function renderSessionList(sl, projId, filter) {
   const sessions = JSON.parse(sl.dataset.sessions || '[]');
   sl.innerHTML = '';
-  const filtered = filter ? sessions.filter(s =>
+  const visible = S.showHidden ? sessions : sessions.filter(s => !(s.meta?.hidden));
+  const filtered = filter ? visible.filter(s =>
     s.title.toLowerCase().includes(filter) ||
     (s.meta?.tags || []).some(t => t.toLowerCase().includes(filter))
-  ) : sessions;
+  ) : visible;
   for (const sess of filtered) {
     const meta = sess.meta || {};
-    const item = el('div', 'sess-item' + (S.currentSession === sess.id ? ' active' : ''));
+    const item = el('div', 'sess-item' + (S.currentSession === sess.id ? ' active' : '') + (meta.hidden ? ' sess-hidden' : ''));
     item.dataset.sid = sess.id;
     const tags = meta.tags || [];
     const tagsHtml = tags.map(t => `<span class="tag-chip">${esc(t)}</span>`).join('');
@@ -585,6 +621,10 @@ function renderSessionList(sl, projId, filter) {
       ${meta.memo ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📝 ${esc(meta.memo)}</div>` : ''}
     `;
     item.addEventListener('click', () => loadSession(projId, sess.id));
+    item.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      openSessContextMenu(e, projId, sess.id, meta);
+    });
     sl.appendChild(item);
   }
   if (!filtered.length) {
@@ -1004,6 +1044,7 @@ let _ctxProjId = null, _ctxProjCwd = null, _ctxProjMeta = null, _ctxNameSpan = n
 function openProjContextMenu(e, projId, cwd, projMeta, nameSpan) {
   _ctxProjId = projId; _ctxProjCwd = cwd; _ctxProjMeta = projMeta; _ctxNameSpan = nameSpan;
   document.getElementById('ctx-star').textContent = projMeta.starred ? '⭐ スターを外す' : '☆ スター';
+  document.getElementById('ctx-hide').textContent = projMeta.hidden ? '👁 再表示' : '🙈 非表示にする';
   const menu = document.getElementById('ctx-menu');
   menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
   menu.style.top  = Math.min(e.clientY, window.innerHeight - 80) + 'px';
@@ -1052,10 +1093,53 @@ document.getElementById('ctx-open-folder').addEventListener('click', async () =>
   closeProjContextMenu();
   await fetch(`/api/open-folder?path=${encodeURIComponent(_ctxProjCwd)}`);
 });
+document.getElementById('ctx-hide').addEventListener('click', async () => {
+  closeProjContextMenu();
+  const newMeta = { ..._ctxProjMeta, hidden: !_ctxProjMeta.hidden };
+  await post('/api/meta/project', { project_id: _ctxProjId, meta: newMeta });
+  S.meta.projects = S.meta.projects || {};
+  S.meta.projects[_ctxProjId] = newMeta;
+  renderProjects();
+});
 document.addEventListener('click', e => {
   if (!document.getElementById('ctx-menu').contains(e.target)) closeProjContextMenu();
+  if (!document.getElementById('sess-ctx-menu').contains(e.target)) closeSessContextMenu();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProjContextMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeProjContextMenu(); closeSessContextMenu(); } });
+
+// ── Session context menu ──
+let _ctxSessProjId = null, _ctxSessId = null, _ctxSessMeta = null;
+function openSessContextMenu(e, projId, sessId, meta) {
+  _ctxSessProjId = projId; _ctxSessId = sessId; _ctxSessMeta = meta;
+  document.getElementById('sess-ctx-hide').textContent = meta.hidden ? '👁 再表示' : '🙈 非表示にする';
+  const menu = document.getElementById('sess-ctx-menu');
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
+  menu.style.top  = Math.min(e.clientY, window.innerHeight - 60) + 'px';
+  menu.classList.add('open');
+}
+function closeSessContextMenu() {
+  document.getElementById('sess-ctx-menu').classList.remove('open');
+}
+document.getElementById('sess-ctx-hide').addEventListener('click', async () => {
+  closeSessContextMenu();
+  const key = `${_ctxSessProjId}/${_ctxSessId}`;
+  const newMeta = { ..._ctxSessMeta, hidden: !_ctxSessMeta.hidden };
+  await post('/api/meta/session', { project_id: _ctxSessProjId, session_id: _ctxSessId, meta: newMeta });
+  S.meta.sessions = S.meta.sessions || {};
+  S.meta.sessions[key] = newMeta;
+  refreshSessionMeta(key, newMeta);
+});
+
+// ── Show hidden toggle ──
+document.getElementById('btn-show-hidden').addEventListener('click', () => {
+  S.showHidden = !S.showHidden;
+  document.getElementById('btn-show-hidden').classList.toggle('active', S.showHidden);
+  document.getElementById('btn-show-hidden').textContent = S.showHidden ? '👁 非表示を隠す' : '👁 非表示を表示';
+  renderProjects();
+  document.querySelectorAll('.session-list.open').forEach(sl => {
+    renderSessionList(sl, sl.id.replace('sl-', ''), S.sidebarFilter.toLowerCase());
+  });
+});
 
 function refreshSessionMeta(key, newMeta) {
   const [projId, sessId] = key.split('/', 2);
@@ -1320,6 +1404,9 @@ document.getElementById('search-panel').addEventListener('click', e => {
   if (e.target === document.getElementById('search-panel')) document.getElementById('search-panel').classList.remove('open');
 });
 document.getElementById('btn-starred').addEventListener('click', openStarredPanel);
+document.getElementById('btn-help').addEventListener('click', () => {
+  document.getElementById('help-modal').classList.toggle('open');
+});
 document.getElementById('btn-starred-close').addEventListener('click', () => {
   document.getElementById('starred-panel').classList.remove('open');
 });
@@ -1336,6 +1423,8 @@ document.getElementById('lightbox').addEventListener('click', () => {
 
 // Keyboard shortcuts
 document.addEventListener('keydown', e => {
+  const tag = document.activeElement?.tagName;
+  const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
     e.preventDefault();
     document.getElementById('search-panel').classList.add('open');
@@ -1346,7 +1435,23 @@ document.addEventListener('keydown', e => {
     document.getElementById('starred-panel').classList.remove('open');
     document.getElementById('memo-modal').classList.remove('open');
     document.getElementById('lightbox').classList.remove('open');
+    document.getElementById('help-modal').classList.remove('open');
   }
+  if (!inInput && e.key === '?') {
+    document.getElementById('help-modal').classList.toggle('open');
+  }
+  if (!inInput && e.key === 'ArrowLeft') {
+    document.getElementById('btn-prev-session').click();
+  }
+  if (!inInput && e.key === 'ArrowRight') {
+    document.getElementById('btn-next-session').click();
+  }
+});
+document.getElementById('btn-help-close').addEventListener('click', () => {
+  document.getElementById('help-modal').classList.remove('open');
+});
+document.getElementById('help-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('help-modal')) document.getElementById('help-modal').classList.remove('open');
 });
 
 // ── Resize handle ──
