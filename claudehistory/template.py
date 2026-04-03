@@ -119,6 +119,7 @@ input{font:inherit;color:inherit}
 /* ── Chat pane ── */
 #chat-pane{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;position:relative}
 #chat-header{padding:10px 16px;border-bottom:1px solid var(--border);background:var(--sidebar-bg);flex-shrink:0;display:flex;align-items:center;gap:8px}
+.header-sep{width:1px;height:16px;background:var(--border);margin:0 2px;flex-shrink:0}
 #session-title{font-weight:600;font-size:14px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
 /* ── Scroll jump buttons ── */
@@ -202,6 +203,7 @@ input{font:inherit;color:inherit}
 .tbtn{font-size:14px;padding:2px 5px;border-radius:6px;opacity:.6;transition:opacity .1s}
 .tbtn:hover{opacity:1;background:var(--chip-bg)}
 .tbtn.active{opacity:1;color:var(--star-color)}
+.tbtn:disabled{opacity:.25;cursor:default;pointer-events:none}
 /* ── Search panel ── */
 #search-panel{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-start;justify-content:center;padding-top:60px;background:rgba(0,0,0,.4);display:none}
 #search-panel.open{display:flex}
@@ -290,7 +292,7 @@ input{font:inherit;color:inherit}
     <!-- Sidebar -->
     <div id="sidebar">
       <div id="sidebar-header">
-        <input id="sidebar-search" type="text" placeholder="セッション名を絞り込み…" />
+        <input id="sidebar-search" type="text" placeholder="セッション名・タグで絞り込み…" />
       </div>
       <div id="project-list"></div>
     </div>
@@ -300,10 +302,18 @@ input{font:inherit;color:inherit}
     <!-- Chat pane -->
     <div id="chat-pane">
       <div id="chat-header">
+        <button class="tbtn" id="btn-prev-session" title="前のセッション" disabled style="font-size:16px">◀</button>
         <span id="session-title">プロジェクトを選択してください</span>
+        <button class="tbtn" id="btn-next-session" title="次のセッション" disabled style="font-size:16px">▶</button>
+        <span class="header-sep"></span>
         <button class="tbtn" id="btn-session-star" title="セッションをスター" style="font-size:16px">☆</button>
         <button class="tbtn" id="btn-session-memo" title="メモ・タグ編集" style="font-size:16px">📝</button>
-        <button class="tbtn" id="btn-export" title="HTMLとして保存" style="font-size:16px">💾</button>
+        <span class="header-sep"></span>
+        <select id="export-format" title="保存形式" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--search-bg);color:var(--text);font-size:12px">
+          <option value="html">HTML</option>
+          <option value="md">Markdown</option>
+        </select>
+        <button class="tbtn" id="btn-export" title="保存" style="font-size:16px">💾</button>
       </div>
       <div id="scroll-btns">
         <button class="scroll-btn" id="btn-scroll-top" title="先頭へ">↑</button>
@@ -555,7 +565,10 @@ async function toggleProject(projId) {
 function renderSessionList(sl, projId, filter) {
   const sessions = JSON.parse(sl.dataset.sessions || '[]');
   sl.innerHTML = '';
-  const filtered = filter ? sessions.filter(s => s.title.toLowerCase().includes(filter)) : sessions;
+  const filtered = filter ? sessions.filter(s =>
+    s.title.toLowerCase().includes(filter) ||
+    (s.meta?.tags || []).some(t => t.toLowerCase().includes(filter))
+  ) : sessions;
   for (const sess of filtered) {
     const meta = sess.meta || {};
     const item = el('div', 'sess-item' + (S.currentSession === sess.id ? ' active' : ''));
@@ -616,6 +629,13 @@ async function loadSession(projId, sessionId) {
   const sessKey = `${projId}/${sessionId}`;
   const sessMeta = (S.meta.sessions || {})[sessKey] || {};
   document.getElementById('btn-session-star').textContent = sessMeta.starred ? '⭐' : '☆';
+
+  // Update prev/next buttons
+  const sl = document.getElementById('sl-' + projId);
+  const sessions = sl ? JSON.parse(sl.dataset.sessions || '[]') : [];
+  const idx = sessions.findIndex(x => x.id === sessionId);
+  document.getElementById('btn-prev-session').disabled = idx <= 0;
+  document.getElementById('btn-next-session').disabled = idx < 0 || idx >= sessions.length - 1;
 
   renderMessages(msgs);
 }
@@ -1088,7 +1108,10 @@ document.getElementById('btn-session-memo').addEventListener('click', () => {
   const existing = (S.meta.sessions || {})[key] || {};
   openMemo('session', key, existing);
 });
-document.getElementById('btn-export').addEventListener('click', exportHTML);
+document.getElementById('btn-export').addEventListener('click', () => {
+  const fmt = document.getElementById('export-format').value;
+  if (fmt === 'md') exportMarkdown(); else exportHTML();
+});
 
 // ── Search ──
 function populateSearchScope() {
@@ -1232,6 +1255,24 @@ async function openStarredPanel() {
   }
   document.getElementById('starred-panel').classList.add('open');
 }
+
+// ── Prev / Next session ──
+document.getElementById('btn-prev-session').addEventListener('click', () => {
+  if (!S.currentProject) return;
+  const sl = document.getElementById('sl-' + S.currentProject);
+  if (!sl) return;
+  const sessions = JSON.parse(sl.dataset.sessions || '[]');
+  const idx = sessions.findIndex(x => x.id === S.currentSession);
+  if (idx > 0) loadSession(S.currentProject, sessions[idx - 1].id);
+});
+document.getElementById('btn-next-session').addEventListener('click', () => {
+  if (!S.currentProject) return;
+  const sl = document.getElementById('sl-' + S.currentProject);
+  if (!sl) return;
+  const sessions = JSON.parse(sl.dataset.sessions || '[]');
+  const idx = sessions.findIndex(x => x.id === S.currentSession);
+  if (idx >= 0 && idx < sessions.length - 1) loadSession(S.currentProject, sessions[idx + 1].id);
+});
 
 // ── Sidebar filter ──
 document.getElementById('sidebar-search').addEventListener('input', e => {
@@ -1455,6 +1496,32 @@ ${clone.outerHTML}
   const a = document.createElement('a');
   a.href = url;
   a.download = title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) + '.html';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportMarkdown() {
+  if (!S.currentSession) return;
+  const title = document.getElementById('session-title').textContent;
+  const dateStr = new Date().toLocaleString('ja-JP');
+  const lines = [`# ${title}`, `> 保存日時: ${dateStr}`, ''];
+
+  for (const msg of S.messages) {
+    if (!msg.text) continue;  // テキストのないメッセージ（ツールのみ等）はスキップ
+    const role = msg.role === 'user' ? '## 👤 あなた' : '## 🤖 Claude';
+    const ts = msg.timestamp ? `  \`${new Date(msg.timestamp).toLocaleString('ja-JP')}\`` : '';
+    lines.push(role + ts);
+    lines.push('');
+    lines.push(msg.text);
+    lines.push('');
+  }
+
+  const md = lines.join('\n');
+  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) + '.md';
   a.click();
   URL.revokeObjectURL(url);
 }
