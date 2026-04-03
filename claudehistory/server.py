@@ -84,6 +84,11 @@ def make_handler(reader, meta, cfg):
                 self._send(404, "text/plain", b"Not Found")
 
         def do_POST(self):
+            origin = self.headers.get("Origin", "")
+            if origin and origin != _origin:
+                self._send(403, "text/plain", b"Forbidden")
+                return
+
             parsed = urlparse(self.path)
             path = parsed.path
             length = int(self.headers.get("Content-Length", 0))
