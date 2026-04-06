@@ -248,6 +248,7 @@ class ClaudeDataReader:
         if not f.exists():
             return []
         messages = []
+        skill_expansion_pending = False
         with open(f, encoding="utf-8", errors="replace") as fp:
             for line in fp:
                 line = line.strip()
@@ -260,8 +261,20 @@ class ClaudeDataReader:
                     # Skip lines that belong to a different session (cross-session contamination)
                     if obj.get("sessionId") and obj.get("sessionId") != session_id:
                         continue
+                    # Track Skill tool_use in assistant messages; the following user text
+                    # message is the skill expansion injected by the harness, not real user input.
+                    if obj.get("type") == "assistant":
+                        content = obj.get("message", {}).get("content", [])
+                        skill_expansion_pending = isinstance(content, list) and any(
+                            isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Skill"
+                            for b in content
+                        )
                     msg = _process_message(obj)
                     if msg:
+                        if msg["role"] == "user" and skill_expansion_pending:
+                            # This is the skill-expanded prompt injected as a user message; skip it.
+                            skill_expansion_pending = False
+                            continue
                         messages.append(msg)
                 except Exception:
                     pass
