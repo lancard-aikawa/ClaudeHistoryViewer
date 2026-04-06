@@ -823,8 +823,23 @@ function renderMessage(msg) {
   const copyBtn = el('button', 'tbtn');
   copyBtn.textContent = '📋';
   copyBtn.title = 'テキストをコピー';
-  copyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(msg.text || '');
+  copyBtn.addEventListener('click', async () => {
+    const parts = [];
+    if (msg.text) parts.push(msg.text);
+    for (const t of (msg.thinking || [])) { if (t) parts.push(t); }
+    for (const tu of (msg.tool_uses || [])) {
+      const desc = tu.description || tu.name;
+      parts.push(`[${tu.name}] ${desc}`);
+    }
+    const text = parts.join('\n\n');
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
     copyBtn.textContent = '✓';
     setTimeout(() => copyBtn.textContent = '📋', 1500);
   });

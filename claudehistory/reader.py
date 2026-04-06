@@ -137,16 +137,15 @@ def _process_tool_use(block: dict) -> dict:
         if inp.get("path"):
             description += f" in {inp['path']}"
     elif name == "Bash":
-        cmd = inp.get("command", "")
-        description = cmd[:100]
+        description = inp.get("command", "")
     elif name in ("WebFetch", "WebSearch"):
-        description = (inp.get("url") or inp.get("query") or "")[:80]
+        description = inp.get("url") or inp.get("query") or ""
     elif name == "Agent":
-        description = inp.get("description") or inp.get("prompt", "")[:60]
+        description = inp.get("description") or inp.get("prompt", "")
     else:
         for v in inp.values():
             if isinstance(v, str) and v:
-                description = v[:80]
+                description = v
                 break
 
     return {"name": name, "file": file_path, "description": description}
