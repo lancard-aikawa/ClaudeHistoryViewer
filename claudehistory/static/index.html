@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude History Viewer</title>
+<style>
+/* {{STYLE}} */
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <div id="header">
+    <h1>💬 Claude History Viewer</h1>
+    <button class="hbtn" id="btn-search" title="検索 (Ctrl+K)">🔍 検索</button>
+    <button class="hbtn" id="btn-starred" title="スター一覧">⭐ スター</button>
+    <button class="hbtn" id="btn-ts" title="時刻表示切替">🕐 時刻</button>
+    <button class="hbtn" id="btn-theme" title="ダーク/ライト切替">🌙</button>
+    <button class="hbtn" id="btn-font-down" title="文字小">A-</button>
+    <button class="hbtn" id="btn-font-up" title="文字大">A+</button>
+    <select id="font-select" title="フォント選択">
+      <option value="auto">Fnt: 自動</option>
+      <option value="cascadia-code">Cascadia Code</option>
+      <option value="cascadia-mono">Cascadia Mono</option>
+      <option value="consolas">Consolas</option>
+      <option value="biz-ud">BIZ UDゴシック</option>
+      <option value="courier-new">Courier New</option>
+      <option value="system">System UI</option>
+    </select>
+    <button class="hbtn" id="btn-help" title="キーボードショートカット (?)">?</button>
+  </div>
+
+  <div id="main">
+    <!-- Sidebar -->
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <input id="sidebar-search" type="text" placeholder="セッション名・タグで絞り込み…" />
+        <button class="tbtn" id="btn-show-hidden" title="非表示項目を表示" style="font-size:13px;margin-top:4px;width:100%;text-align:left;padding:3px 8px">👁 非表示を表示</button>
+      </div>
+      <div id="project-list"></div>
+    </div>
+
+    <div id="resize-handle"></div>
+
+    <!-- Chat pane -->
+    <div id="chat-pane">
+      <div id="chat-header">
+        <button class="tbtn" id="btn-prev-session" title="前のセッション" disabled style="font-size:16px">◀</button>
+        <span id="session-title">プロジェクトを選択してください</span>
+        <button class="tbtn" id="btn-next-session" title="次のセッション" disabled style="font-size:16px">▶</button>
+        <span class="header-sep"></span>
+        <button class="tbtn" id="btn-session-star" title="セッションをスター" style="font-size:16px">☆</button>
+        <button class="tbtn" id="btn-session-memo" title="メモ・タグ編集" style="font-size:16px">📝</button>
+        <span class="header-sep"></span>
+        <select id="export-format" title="保存形式" style="padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--search-bg);color:var(--text);font-size:12px">
+          <option value="html">HTML</option>
+          <option value="md">Markdown</option>
+        </select>
+        <button class="tbtn" id="btn-export" title="保存" style="font-size:16px">💾</button>
+      </div>
+      <div id="scroll-btns">
+        <button class="scroll-btn" id="btn-scroll-top" title="先頭へ">↑</button>
+        <button class="scroll-btn" id="btn-scroll-bottom" title="末尾へ">↓</button>
+      </div>
+      <div id="chat-messages">
+        <div id="chat-empty">
+          <div class="icon">💬</div>
+          <div>左のサイドバーからセッションを選択してください</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Search panel -->
+<div id="search-panel">
+  <div id="search-box">
+    <div id="search-input-row">
+      <input id="search-input" type="text" placeholder="検索キーワードを入力…" />
+      <select id="search-type">
+        <option value="text">テキスト</option>
+        <option value="file">ファイル名</option>
+      </select>
+      <select id="search-scope">
+        <option value="">全プロジェクト</option>
+      </select>
+      <button class="tbtn" id="btn-search-close" style="font-size:18px">✕</button>
+    </div>
+    <div id="search-results"><div class="sr-empty">キーワードを入力して検索</div></div>
+  </div>
+</div>
+
+<!-- Project context menu -->
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-star">☆ スター</div>
+  <div class="ctx-item" id="ctx-memo">📝 メモ・タグ</div>
+  <div class="ctx-item" id="ctx-label">✏️ ラベルを編集</div>
+  <div class="ctx-item" id="ctx-open-folder">⧉ フォルダを開く</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-hide">🙈 非表示にする</div>
+</div>
+
+<!-- Session context menu -->
+<div id="sess-ctx-menu">
+  <div class="ctx-item" id="sess-ctx-hide">🙈 非表示にする</div>
+</div>
+
+<!-- Starred panel -->
+<div id="starred-panel">
+  <div id="starred-box">
+    <div class="panel-header">
+      ⭐ スター・タグ一覧
+      <button id="btn-starred-close" style="font-size:18px">✕</button>
+    </div>
+    <div class="panel-body" id="starred-body"></div>
+  </div>
+</div>
+
+<!-- Memo modal -->
+<div id="memo-modal">
+  <div id="memo-box">
+    <h3>📝 メモ・タグ</h3>
+    <textarea id="memo-textarea" placeholder="メモを入力…"></textarea>
+    <input id="tag-input" type="text" placeholder="タグ (カンマ区切り、例: 重要, バグ修正)" />
+    <div class="memo-btns">
+      <button class="btn btn-ghost" id="btn-memo-cancel">キャンセル</button>
+      <button class="btn btn-primary" id="btn-memo-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox"><img id="lightbox-img" src="" alt=""></div>
+
+<!-- Help modal -->
+<div id="help-modal">
+  <div id="help-box">
+    <h3>⌨️ キーボードショートカット</h3>
+    <div class="help-row"><span>検索パネルを開く</span><span class="help-key">Ctrl + K</span></div>
+    <div class="help-row"><span>前のセッションへ</span><span class="help-key">←</span></div>
+    <div class="help-row"><span>次のセッションへ</span><span class="help-key">→</span></div>
+    <div class="help-row"><span>パネルを閉じる</span><span class="help-key">Escape</span></div>
+    <div class="help-row"><span>このヘルプを閉じる</span><span class="help-key">?</span></div>
+    <div style="margin-top:14px;text-align:right"><button class="btn btn-ghost" id="btn-help-close">閉じる</button></div>
+  </div>
+</div>
+
+<script>
+// {{SCRIPT}}
+</script>
+</body>
+</html>
