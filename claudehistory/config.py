@@ -16,8 +16,7 @@ SETTINGS_DEFAULTS: dict = {
     "collapse_lines": 15,         # これ以上の行数で折りたたむ
     "collapse_chars": 600,        # これ以上の文字数で折りたたむ（行数より先に達した場合も折りたたむ）
     "preview_chars":  300,        # 折りたたみ時に表示するプレビュー文字数
-    "show_timestamp":  True,       # メッセージの時刻を表示する
-    "show_thinking":   True,      # 思考プロセスブロックを表示する
+"show_thinking":   True,      # 思考プロセスブロックを表示する
     "show_tool_chips": True,      # ツール呼び出しチップを表示する
     "max_search_results": 300,    # 検索結果の最大件数
 }

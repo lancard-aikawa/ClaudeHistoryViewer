@@ -6,7 +6,6 @@
   "collapse_chars": 600,
   "preview_chars": 300,
 
-  "show_timestamp": true,
   "show_thinking": true,
   "show_tool_chips": true,
   "max_search_results": 300

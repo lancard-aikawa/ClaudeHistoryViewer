@@ -446,10 +446,6 @@ async function post(path, data) {
 // ── Init ──
 async function init() {
   S.cfg = await api('/api/settings');
-  // localStorage に未保存の場合は settings.json の値をデフォルトとして使う
-  if (localStorage.getItem('showTs') === null) {
-    S.showTs = S.cfg.show_timestamp !== false;
-  }
   applyTheme();
   applyFontSize();
   applyFont();

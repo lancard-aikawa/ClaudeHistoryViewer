@@ -218,7 +218,6 @@ python claude_chat_viewer.py --no-browser
   "collapse_chars": 600,      // これ以上の文字数で折りたたむ（行数・文字数どちらか先に達した方が適用）
   "preview_chars":  300,      // 折りたたみ時に表示するプレビュー文字数
 
-  "show_timestamp":  true,    // メッセージの時刻を表示する（ヘッダーボタンの初期状態）
   "show_thinking":   true,    // 思考プロセスブロックを表示する
   "show_tool_chips": true,    // ツール呼び出しチップを表示する
   "max_search_results": 300   // 検索結果の最大件数
