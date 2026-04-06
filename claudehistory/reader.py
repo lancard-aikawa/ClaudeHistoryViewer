@@ -79,7 +79,16 @@ def _process_message(obj: dict) -> dict | None:
             tool_uses.append(_process_tool_use(block))
         elif btype == "tool_result":
             inner = block.get("content", "")
-            if isinstance(inner, list):
+            if isinstance(inner, str) and block.get("is_error"):
+                # Extract user-supplied reason from tool rejection messages
+                marker = "The user provided the following reason for the rejection:"
+                idx = inner.find(marker)
+                if idx != -1:
+                    reason = inner[idx + len(marker):].strip()
+                    if reason:
+                        text_parts.append(reason)
+                        has_user_text = True
+            elif isinstance(inner, list):
                 for item in inner:
                     if isinstance(item, dict) and item.get("type") == "image":
                         src = item.get("source", {})
