@@ -1404,10 +1404,15 @@ document.getElementById('font-select').addEventListener('change', e => {
   localStorage.setItem('fontKey', S.fontKey);
   applyFont();
 });
-document.getElementById('btn-search').addEventListener('click', () => {
+function openSearchPanel() {
   document.getElementById('search-panel').classList.add('open');
-  setTimeout(() => document.getElementById('search-input').focus(), 50);
-});
+  const inp = document.getElementById('search-input');
+  setTimeout(() => {
+    inp.focus();
+    if (inp.value.trim()) runSearch();
+  }, 50);
+}
+document.getElementById('btn-search').addEventListener('click', openSearchPanel);
 document.getElementById('btn-search-close').addEventListener('click', () => {
   document.getElementById('search-panel').classList.remove('open');
 });
@@ -1438,8 +1443,7 @@ document.addEventListener('keydown', e => {
   const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
     e.preventDefault();
-    document.getElementById('search-panel').classList.add('open');
-    setTimeout(() => document.getElementById('search-input').focus(), 50);
+    openSearchPanel();
   }
   if (e.key === 'Escape') {
     document.getElementById('search-panel').classList.remove('open');
