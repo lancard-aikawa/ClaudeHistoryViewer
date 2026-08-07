@@ -181,6 +181,15 @@ input{font:inherit;color:inherit}
 .msg-row.user .md-table tr:nth-child(even) td{background:rgba(255,255,255,.08)}
 [data-theme="dark"] .md-table th{background:rgba(255,255,255,.07)}
 [data-theme="dark"] .md-table th,[data-theme="dark"] .md-table td{border-color:rgba(255,255,255,.1)}
+/* Math (KaTeX) */
+.katex{font-size:1.05em;color:inherit}
+/* 長い数式は吹き出しを押し広げず、その行だけ横スクロールさせる */
+.katex-display{margin:.6em 0;padding:2px 0;overflow-x:auto;overflow-y:hidden}
+.katex-display>.katex{text-align:center}
+.md-table .katex-display{margin:.2em 0}
+/* KaTeX 未読込 / 構文エラー時のフォールバック（ソースをそのまま見せる） */
+.math-raw{font-family:'Cascadia Code','Fira Code',monospace;font-size:.92em;opacity:.85}
+div.math-raw{display:block;margin:.4em 0;text-align:center}
 /* Collapsed long messages */
 .msg-collapse{margin-top:6px}
 .msg-collapse summary{font-size:12px;color:var(--accent);cursor:pointer;user-select:none;list-style:none;padding:2px 0}

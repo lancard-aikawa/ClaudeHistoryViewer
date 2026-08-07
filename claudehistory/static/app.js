@@ -442,6 +442,55 @@ function toolIcon(name) {
   return icons[name] || '🔧';
 }
 
+// ── 数式 (KaTeX) ──
+const _esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// $…$ は履歴中の `$PATH` / `$100 と $200` を数式と誤認しないよう厳格に判定する:
+//   ・開き $ の直後・閉じ $ の直前に空白を許さない
+//   ・前後が単語構成文字 / $ の場合は不成立（US$5、$1$2 など）
+//   ・中身に改行と裸の $ を含まない
+const RE_MATH_DOLLAR = /(?<![\w$])\$(?!\s)((?:\\.|[^\\$\n])+?)(?<![\s\\])\$(?![\w$])/g;
+
+// 中身が数字と区切り記号だけなら通貨表記とみなして数式にしない（$100$ 等）
+const _isMathy = tex => !/^[\d\s.,]+$/.test(tex);
+
+function _renderMath(tex, displayMode) {
+  // KaTeX が読み込めていない場合はソースをそのまま見せる（黙って消さない）
+  if (typeof katex === 'undefined') {
+    const tag = displayMode ? 'div' : 'span';
+    return `<${tag} class="math-raw">${_esc(tex)}</${tag}>`;
+  }
+  try {
+    return katex.renderToString(tex.trim(), {
+      displayMode,
+      throwOnError: false,   // 構文エラーは赤字でソース表示（例外にしない）
+      errorColor: '#d33',
+      strict: 'ignore',      // \text{} 内の日本語などで警告を出さない
+      trust: false,          // \href / \htmlClass 等の危険なコマンドを無効化
+    });
+  } catch (e) {
+    const tag = displayMode ? 'div' : 'span';
+    return `<${tag} class="math-raw">${_esc(tex)}</${tag}>`;
+  }
+}
+
+// インラインコードと数式をプレースホルダへ退避する。
+// HTMLエスケープや **/* のインライン変換より必ず前に呼ぶこと
+// （TeX ソースをエスケープしてはならず、$a * b * c$ を <em> 化されても困るため）。
+function _protect(text, save) {
+  return text
+    // ① インラインコード: 中の $ や \( を数式扱いさせない
+    .replace(/`([^`\n]+)`/g, (_, c) => save(`<code>${_esc(c)}</code>`))
+    // ② ディスプレイ数式
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => save(_renderMath(t, true)))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => save(_renderMath(t, true)))
+    // ③ インライン数式
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_, t) => save(_renderMath(t, false)))
+    .replace(RE_MATH_DOLLAR, (m, t) => _isMathy(t) ? save(_renderMath(t, false)) : m)
+    // ④ 残った \$ はリテラルの $
+    .replace(/\\\$/g, '$');
+}
+
 // ── Markdown renderer ──
 function renderMd(text) {
   if (!text) return '';
@@ -477,16 +526,18 @@ function renderMd(text) {
     return save(`<div class="code-wrap"><button class="code-copy-btn">コピー</button><pre><code>${escaped}</code></pre></div>`);
   });
 
-  // ③ 残りをHTMLエスケープ（プレースホルダの \x00 は影響を受けない）
+  // ③ インラインコード・数式を退避（エスケープ前にやる必要がある）
+  s = _protect(s, save);
+
+  // ④ 残りをHTMLエスケープ（プレースホルダの \x00 は影響を受けない）
   s = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-  // ④ インライン要素
-  s = s.replace(/`([^`\n]+)`/g, (_, c) => `<code>${c}</code>`);
+  // ⑤ インライン要素
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
   s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
 
-  // ⑤ 行単位でブロック要素を処理（見出し・リスト・段落を正しく分離）
+  // ⑥ 行単位でブロック要素を処理（見出し・リスト・段落を正しく分離）
   const parts = [];
   let paraLines = [];
   let listItems = [];
@@ -536,7 +587,7 @@ function renderMd(text) {
   flushList();
   flushPara();
 
-  // ⑥ プレースホルダ復元
+  // ⑦ プレースホルダ復元
   return parts.join('').replace(/\x00(\d+)\x00/g, (_, i) => saved[+i]);
 }
 
@@ -551,12 +602,18 @@ function _renderTable(lines) {
   const aligns = sep.map(c =>
     (c.startsWith(':') && c.endsWith(':')) ? 'center' :
     c.endsWith(':') ? 'right' : 'left');
-  // セル内テキストをエスケープ＋インラインマークアップだけ処理
-  const ec = c => c
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g,'<em>$1</em>')
-    .replace(/`([^`]+)`/g,'<code>$1</code>');
+  // セル内テキストをエスケープ＋インラインマークアップだけ処理。
+  // プレースホルダは呼び出し元 (renderMd) のものと混ざらないようセル単位で完結させる
+  // ——復元は最後に1パスしか走らないため、入れ子にすると復元漏れになる。
+  const ec = c => {
+    const cellSaved = [];
+    const save = h => { const i = cellSaved.length; cellSaved.push(h); return `\x00${i}\x00`; };
+    return _protect(c, save)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g,'<em>$1</em>')
+      .replace(/\x00(\d+)\x00/g, (_, i) => cellSaved[+i]);
+  };
   let h = '<div class="md-table-wrap"><table class="md-table"><thead><tr>';
   header.forEach((c,i) => h += `<th style="text-align:${aligns[i]||'left'}">${ec(c)}</th>`);
   h += '</tr></thead><tbody>';
@@ -787,7 +844,8 @@ document.getElementById('btn-session-memo').addEventListener('click', () => {
 });
 document.getElementById('btn-export').addEventListener('click', () => {
   const fmt = document.getElementById('export-format').value;
-  if (fmt === 'md') exportMarkdown(); else exportHTML();
+  if (fmt === 'md') exportMarkdown();
+  else exportHTML().catch(e => { console.error(e); alert('HTMLの保存に失敗しました: ' + e); });
 });
 
 // ── Search ──
@@ -1101,7 +1159,37 @@ function fmtTime(ts) {
   } catch { return ''; }
 }
 // ── Export ──
-function exportHTML() {
+// エクスポートHTMLは単体ファイルとして配布されるため、数式が含まれる場合のみ
+// KaTeX の CSS とフォントを data URI で丸ごと埋め込んで自己完結させる（約 +400KB）。
+let _katexCssCache = null;
+async function buildKatexEmbedCss() {
+  if (_katexCssCache !== null) return _katexCssCache;
+  const b64 = buf => {
+    let bin = '';
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  };
+  try {
+    let css = await (await fetch('/vendor/katex/katex.min.css')).text();
+    const names = [...new Set([...css.matchAll(/fonts\/([\w-]+)\.woff2/g)].map(m => m[1]))];
+    const fonts = {};
+    await Promise.all(names.map(async n => {
+      const r = await fetch(`/vendor/katex/fonts/${n}.woff2`);
+      if (r.ok) fonts[n] = b64(await r.arrayBuffer());
+    }));
+    // src の woff/ttf 候補は相対パスのままだと壊れるので woff2 の data URI 1本に置き換える
+    css = css.replace(/src:url\(fonts\/([\w-]+)\.woff2\)[^;}]*/g, (m, n) =>
+      fonts[n] ? `src:url(data:font/woff2;base64,${fonts[n]}) format("woff2")` : m);
+    _katexCssCache = css;
+  } catch (e) {
+    console.warn('KaTeX CSS の埋め込みに失敗しました。数式はフォールバック表示になります', e);
+    _katexCssCache = '';
+  }
+  return _katexCssCache;
+}
+
+async function exportHTML() {
   if (!S.currentSession) return;
 
   const title = document.getElementById('session-title').textContent;
@@ -1129,6 +1217,11 @@ function exportHTML() {
     '--font-family','--font-size','--radius','--shadow'];
   const varBlock = vars.map(v => `  ${v}:${cs.getPropertyValue(v)};`).join('\n');
 
+  // 数式が1つでもあれば KaTeX のスタイル一式を埋め込む
+  const katexCss = clone.querySelector('.katex, .math-raw')
+    ? await buildKatexEmbedCss()
+    : '';
+
   const html = `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -1136,6 +1229,8 @@ function exportHTML() {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
 <style>
+/* KaTeX（フォントを data URI で同梱）— 以降の .katex 上書きより先に置く */
+${katexCss}
 :root {
 ${varBlock}
 }
@@ -1182,6 +1277,11 @@ body{font-family:var(--font-family);font-size:var(--font-size);background:var(--
 .md-table tr:nth-child(even) td{background:rgba(0,0,0,.025)}
 .msg-row.user .md-table th,.msg-row.user .md-table td{border-color:rgba(255,255,255,.3)}
 .msg-row.user .md-table th{background:rgba(255,255,255,.18)}
+.katex{font-size:1.05em;color:inherit}
+.katex-display{margin:.6em 0;padding:2px 0;overflow-x:auto;overflow-y:hidden}
+.katex-display>.katex{text-align:center}
+.math-raw{font-family:monospace;font-size:.92em;opacity:.85}
+div.math-raw{display:block;margin:.4em 0;text-align:center}
 </style>
 </head>
 <body>
