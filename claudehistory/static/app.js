@@ -194,6 +194,7 @@ function renderSessionList(sl, projId, filter) {
       <div class="sess-meta">
         <span class="sess-date">${fmtDate(sess.timestamp)}</span>
         <span class="sess-count">${sess.message_count}件</span>
+        ${sess.archived ? '<span class="sess-archived" title="Claude Code 側では削除済み。バックアップから表示しています">保存分</span>' : ''}
       </div>
       ${tagsHtml ? `<div class="sess-tags">${tagsHtml}</div>` : ''}
       ${meta.memo ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📝 ${esc(meta.memo)}</div>` : ''}
@@ -1077,6 +1078,205 @@ document.getElementById('lightbox').addEventListener('click', () => {
   document.getElementById('lightbox').classList.remove('open');
 });
 
+// ── Settings ──
+// ビューアの設定（settings.json）。restart: true はビューアの再起動まで効かない
+const VIEWER_FIELDS = [
+  { group: '表示', key: 'collapse_lines', label: 'この行数を超えたら折りたたむ', type: 'int' },
+  { group: '表示', key: 'collapse_chars', label: 'この文字数を超えたら折りたたむ', type: 'int' },
+  { group: '表示', key: 'preview_chars', label: '折りたたみ時に見せる文字数', type: 'int' },
+  { group: '表示', key: 'show_thinking', label: '思考プロセスを表示', type: 'bool' },
+  { group: '表示', key: 'show_tool_chips', label: 'ツール呼び出しを表示', type: 'bool' },
+  { group: '検索', key: 'max_search_results', label: '検索結果の最大件数', type: 'int' },
+  { group: 'バックアップ', key: 'archive_enabled', label: 'セッションのバックアップを取る', type: 'bool', restart: true },
+  { group: 'バックアップ', key: 'archive_dir', label: '保存先', type: 'str', restart: true,
+    placeholder: '~/.claude/chat-viewer-archive', help: '空なら ~/.claude/chat-viewer-archive' },
+  { group: 'バックアップ', key: 'archive_interval_min', label: 'バックアップの間隔（分）', type: 'int', restart: true },
+  { group: '起動', key: 'port', label: 'ポート番号', type: 'int', restart: true },
+  { group: '起動', key: 'auto_open_browser', label: '起動時にブラウザを開く', type: 'bool', restart: true },
+];
+
+const SET = { tab: 'viewer', data: null };
+
+function textEl(tag, cls, text) {
+  const e = el(tag, cls);
+  e.textContent = text;
+  return e;
+}
+
+async function openSettings() {
+  SET.data = await api('/api/config');
+  setSettingsStatus('');
+  document.getElementById('settings-modal').classList.add('open');
+  renderSettingsTab();
+}
+
+function closeSettings() {
+  document.getElementById('settings-modal').classList.remove('open');
+}
+
+function setSettingsStatus(msg, isError = false) {
+  const s = document.getElementById('settings-status');
+  s.textContent = msg;
+  s.classList.toggle('error', isError);
+}
+
+function renderSettingsTab() {
+  document.querySelectorAll('.settings-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === SET.tab));
+  const body = document.getElementById('settings-body');
+  body.innerHTML = '';
+  document.getElementById('btn-settings-save').style.display = SET.tab === 'raw' ? 'none' : '';
+  if (SET.tab === 'viewer') renderViewerSettings(body);
+  else if (SET.tab === 'claude') renderClaudeSettings(body);
+  else renderRawSettings(body);
+}
+
+// 1 行ぶんの入力欄を作る。input.dataset.orig に元の値を持たせ、保存時に変わったものだけ送る
+function settingRow(body, f, value, input) {
+  const row = el('div', 'set-row');
+  const label = document.createElement('label');
+  label.innerHTML = esc(f.label)
+    + (f.restart ? '<span class="set-restart">再起動後に反映</span>' : '')
+    + (f.help ? `<span class="set-help">${esc(f.help)}</span>` : '');
+  input.dataset.key = f.key;
+  input.dataset.orig = JSON.stringify(value ?? null);
+  input.addEventListener('input', () => input.classList.toggle('changed', JSON.stringify(readSettingInput(input)) !== input.dataset.orig));
+  row.append(label, input);
+  body.appendChild(row);
+}
+
+function makeInput(type, value, opts = {}) {
+  let input;
+  if (type === 'bool') {
+    input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !!value;
+  } else if (type === 'int') {
+    input = document.createElement('input');
+    input.type = 'number';
+    input.min = opts.min ?? 1;
+    input.value = value ?? '';
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+  } else {
+    input = document.createElement('input');
+    input.type = 'text';
+    input.value = value ?? '';
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+  }
+  input.dataset.type = type;
+  return input;
+}
+
+// 入力欄の値を JSON の値に戻す。空欄・「既定」は null（Claude Code 側では項目を消す）
+function readSettingInput(input) {
+  const t = input.dataset.type;
+  if (t === 'bool') return input.checked;
+  if (t === 'tri') return input.value === '' ? null : input.value === 'true';
+  if (t === 'int') return input.value === '' ? null : Number(input.value);
+  if (t === 'enum') return input.value === '' ? null : input.value;
+  return input.value;
+}
+
+function groupHeader(body, group, state) {
+  if (state.last === group) return;
+  state.last = group;
+  body.appendChild(textEl('div', 'set-group', group));
+}
+
+function renderViewerSettings(body) {
+  const v = SET.data.viewer;
+  body.appendChild(textEl('div', 'set-path', `保存先: ${v.path}`));
+  const state = {};
+  for (const f of VIEWER_FIELDS) {
+    groupHeader(body, f.group, state);
+    settingRow(body, f, v.values[f.key], makeInput(f.type, v.values[f.key], f));
+  }
+}
+
+function renderClaudeSettings(body) {
+  const c = SET.data.claude;
+  body.appendChild(textEl('div', 'set-path', `保存先: ${c.path}`));
+  body.appendChild(textEl('div', 'set-note',
+    'ここに無い項目（permissions / hooks / env など）はファイルに書かれたまま残ります。変更は次に起動する Claude Code から効きます。'));
+  if (c.error) body.appendChild(textEl('div', 'set-note', c.error));
+  const state = {};
+  for (const [key, spec] of Object.entries(c.fields)) {
+    groupHeader(body, spec.group, state);
+    const value = c.values[key];
+    const f = { ...spec, key };
+    let input;
+    if (spec.type === 'int') {
+      input = makeInput('int', value, { min: spec.min, placeholder: `既定 ${spec.default}` });
+    } else {
+      // bool も「既定 / オン / オフ」の 3 択にして、項目を消して既定に戻せるようにする
+      input = document.createElement('select');
+      const opts = spec.type === 'bool'
+        ? [['true', 'オン'], ['false', 'オフ']]
+        : spec.values.map(x => [x, x]);
+      if (spec.type === 'enum' && value != null && !spec.values.includes(value)) opts.push([value, value]);
+      const defLabel = spec.type === 'bool' ? (spec.default ? 'オン' : 'オフ') : spec.default;
+      input.innerHTML = `<option value="">既定（${esc(String(defLabel))}）</option>`
+        + opts.map(([val, lab]) => `<option value="${esc(val)}">${esc(lab)}</option>`).join('');
+      input.value = value == null ? '' : String(value);
+      input.dataset.type = spec.type === 'bool' ? 'tri' : 'enum';
+    }
+    settingRow(body, f, value, input);
+  }
+}
+
+function renderRawSettings(body) {
+  const c = SET.data.claude;
+  body.appendChild(textEl('div', 'set-path', c.path));
+  body.appendChild(textEl('div', 'set-note', 'env の値と、token / key / secret などを含む名前の値は *** で伏せています。'));
+  const pre = el('pre', 'set-raw');
+  pre.textContent = c.error || c.raw;
+  body.appendChild(pre);
+}
+
+async function saveSettings() {
+  const changes = {};
+  for (const input of document.querySelectorAll('#settings-body [data-key]')) {
+    const v = readSettingInput(input);
+    if (JSON.stringify(v) === input.dataset.orig) continue;
+    // ビューアの数値は空欄にできない。Claude Code 側は空欄 = 既定に戻す
+    if (input.dataset.type === 'int' && !(Number.isInteger(v) || (v === null && SET.tab === 'claude'))) {
+      setSettingsStatus('整数を入れてください', true);
+      input.focus();
+      return;
+    }
+    changes[input.dataset.key] = v;
+  }
+  if (!Object.keys(changes).length) { setSettingsStatus('変更はありません'); return; }
+
+  const r = await fetch(`/api/config/${SET.tab}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ changes }),
+  });
+  const res = await r.json();
+  if (!res.ok) { setSettingsStatus(res.error || '保存できませんでした', true); return; }
+
+  SET.data = await api('/api/config');
+  renderSettingsTab();
+  if (SET.tab === 'viewer') {
+    S.cfg = await api('/api/settings');
+    // 折りたたみ等の表示設定を今のセッションに反映する
+    if (S.currentProject && S.currentSession) loadSession(S.currentProject, S.currentSession);
+    setSettingsStatus(res.restart?.length ? '保存しました（一部はビューアの再起動後に反映）' : '保存しました');
+  } else {
+    setSettingsStatus('保存しました（次に起動する Claude Code から反映）');
+  }
+}
+
+document.getElementById('btn-settings').addEventListener('click', openSettings);
+document.getElementById('btn-settings-close').addEventListener('click', closeSettings);
+document.getElementById('btn-settings-save').addEventListener('click', saveSettings);
+document.getElementById('settings-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('settings-modal')) closeSettings();
+});
+document.querySelectorAll('.settings-tab').forEach(b => b.addEventListener('click', () => {
+  SET.tab = b.dataset.tab;
+  setSettingsStatus('');
+  renderSettingsTab();
+}));
+
 // Keyboard shortcuts
 document.addEventListener('keydown', e => {
   const tag = document.activeElement?.tagName;
@@ -1091,6 +1291,7 @@ document.addEventListener('keydown', e => {
     document.getElementById('memo-modal').classList.remove('open');
     document.getElementById('lightbox').classList.remove('open');
     document.getElementById('help-modal').classList.remove('open');
+    closeSettings();
   }
   if (!inInput && e.key === '?') {
     document.getElementById('help-modal').classList.toggle('open');

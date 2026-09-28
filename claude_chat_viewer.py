@@ -11,8 +11,10 @@ import webbrowser
 from http.server import HTTPServer
 from pathlib import Path
 
+from claudehistory.archive import start_archive_thread
+from claudehistory.claude_settings import ClaudeSettings
 from claudehistory.config import (
-    DEFAULT_CLAUDE_DIR, META_FILENAME, SETTINGS_FILE, load_settings,
+    ARCHIVE_DIRNAME, DEFAULT_CLAUDE_DIR, META_FILENAME, SETTINGS_FILE, load_settings,
 )
 from claudehistory.reader import ClaudeDataReader
 from claudehistory.meta import MetaStore
@@ -37,14 +39,23 @@ def main():
     # コマンドライン引数で settings.json の値を上書き
     cfg["port"] = args.port
 
-    reader = ClaudeDataReader(claude_dir)
+    archive_dir = None
+    if cfg["archive_enabled"]:
+        archive_dir = (Path(cfg["archive_dir"]).expanduser() if cfg["archive_dir"]
+                       else claude_dir / ARCHIVE_DIRNAME)
+        start_archive_thread(claude_dir / "projects", archive_dir / "projects",
+                             max(1, cfg["archive_interval_min"]) * 60)
+
+    reader = ClaudeDataReader(claude_dir, archive_dir)
     meta = MetaStore(claude_dir / META_FILENAME)
-    handler = make_handler(reader, meta, cfg)
+    handler = make_handler(reader, meta, cfg, ClaudeSettings(claude_dir))
 
     server = HTTPServer(("127.0.0.1", args.port), handler)
     url = f"http://localhost:{args.port}"
     print(f"Claude History Viewer: {url}")
     print(f"設定ファイル: {SETTINGS_FILE}")
+    if archive_dir:
+        print(f"バックアップ先: {archive_dir}")
     print("停止: Ctrl+C")
 
     if not args.no_browser:

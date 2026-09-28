@@ -6,7 +6,11 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .config import SETTINGS_FILE, load_settings, save_settings, validate_settings
 from .template import HTML_TEMPLATE
+
+# 変更してもビューアの再起動まで効かない設定
+RESTART_KEYS = {"port", "auto_open_browser", "archive_enabled", "archive_dir", "archive_interval_min"}
 
 STATIC_DIR = (Path(__file__).parent / "static").resolve()
 
@@ -19,7 +23,7 @@ _CONTENT_TYPES = {
 }
 
 
-def make_handler(reader, meta, cfg):
+def make_handler(reader, meta, cfg, claude_settings):
     _origin = f"http://localhost:{cfg['port']}"
 
     class Handler(BaseHTTPRequestHandler):
@@ -90,6 +94,12 @@ def make_handler(reader, meta, cfg):
                 # 起動設定（port等）はブラウザ側に渡さない
                 pub = {k: v for k, v in cfg.items() if k not in ("port", "auto_open_browser")}
                 self._json(pub)
+            elif path == "/api/config":
+                # 設定画面用。ビューアの値はコマンドライン引数ではなくファイルの内容を見せる
+                self._json({
+                    "viewer": {"path": str(SETTINGS_FILE), "values": load_settings()},
+                    "claude": claude_settings.get(),
+                })
             elif path.startswith("/vendor/"):
                 self._send_file(path.lstrip("/"))
             else:
@@ -120,6 +130,23 @@ def make_handler(reader, meta, cfg):
                 self._json({"ok": True})
             elif path == "/api/meta/project":
                 meta.set_project(data["project_id"], data["meta"])
+                self._json({"ok": True})
+            elif path == "/api/config/viewer":
+                try:
+                    changes = validate_settings(data.get("changes", {}))
+                    save_settings(changes)
+                except (ValueError, OSError, json.JSONDecodeError) as e:
+                    self._json({"ok": False, "error": str(e)})
+                    return
+                # 表示設定はすぐ反映する。port は動作中のサーバの Origin 判定に使うので変えない
+                cfg.update({k: v for k, v in changes.items() if k != "port"})
+                self._json({"ok": True, "restart": sorted(set(changes) & RESTART_KEYS)})
+            elif path == "/api/config/claude":
+                try:
+                    claude_settings.update(data.get("changes", {}))
+                except (ValueError, OSError, json.JSONDecodeError) as e:
+                    self._json({"ok": False, "error": str(e)})
+                    return
                 self._json({"ok": True})
             else:
                 self._send(404, "text/plain", b"Not Found")

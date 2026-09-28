@@ -8,5 +8,9 @@
 
   "show_thinking": true,
   "show_tool_chips": true,
-  "max_search_results": 300
+  "max_search_results": 300,
+
+  "archive_enabled": true,
+  "archive_dir": "",
+  "archive_interval_min": 10
 }

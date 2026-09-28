@@ -173,6 +173,7 @@ python claude_chat_viewer.py --no-browser
 | 🌙 / ☀️ | ダーク / ライトモード切替 |
 | A- / A+ | フォントサイズ変更 |
 | Fnt: ドロップダウン | フォント選択（自動優先順 / 個別指定） |
+| ⚙ 設定 | ビューアと Claude Code の設定画面（下記） |
 
 #### フォント選択について
 
@@ -212,7 +213,9 @@ python claude_chat_viewer.py --no-browser
 
 ## 設定ファイル（settings.json）
 
-`settings.json.sample` をコピーした `settings.json` を編集することで動作をカスタマイズできます。**変更は再起動後に反映されます。**
+ツールバーの **⚙ 設定** から画面で変更できます。表示に関わる設定は保存するとすぐ反映され、「再起動後に反映」の印が付いた項目（ポート・バックアップなど）はビューアの再起動後に効きます。
+
+`settings.json.sample` をコピーした `settings.json` を直接編集してもかまいません（その場合は再起動後に反映）。
 
 ```jsonc
 {
@@ -225,12 +228,30 @@ python claude_chat_viewer.py --no-browser
 
   "show_thinking":   true,    // 思考プロセスブロックを表示する
   "show_tool_chips": true,    // ツール呼び出しチップを表示する
-  "max_search_results": 300   // 検索結果の最大件数
+  "max_search_results": 300,  // 検索結果の最大件数
+
+  "archive_enabled": true,    // セッションのバックアップを取る
+  "archive_dir": "",          // 保存先（空なら ~/.claude/chat-viewer-archive）
+  "archive_interval_min": 10  // バックアップを取り直す間隔（分）
 }
 ```
 
 > `port` と `auto_open_browser` はコマンドライン引数（`--port`, `--no-browser`）で上書きできます。
 > 上書き不可のキーは無視されます（型が異なる場合も同様）。
+
+### Claude Code の設定
+
+設定画面の「Claude Code」タブでは、`~/.claude/settings.json` の次の項目を変更できます。変更は次に起動する Claude Code から効きます。
+
+| 分類 | 項目 |
+|---|---|
+| 保存 | セッションの保存期間（`cleanupPeriodDays`） |
+| 表示 | テーマ・描画方式（`tui`）・ツール出力の全表示・ヒント・進捗バー・アニメーション |
+| 通知 | 通知の方法・スマホへのプッシュ通知 |
+
+- 「既定」を選ぶと、その項目をファイルから消して Claude Code の既定値に戻します
+- 上に無い項目（`permissions` / `hooks` / `env` など）は画面から変更できず、ファイルに書かれたまま残ります。ビューアは認証のないローカル HTTP サーバのため、コマンド実行や権限に関わる項目は編集できないようにしています
+- 「settings.json（閲覧）」タブでファイル全体を見られます。`env` の値と、token / key / secret などを含む名前の値は `***` で伏せています
 
 ### 設定の優先順位
 
@@ -246,8 +267,20 @@ python claude_chat_viewer.py --no-browser
 |---|---|
 | `~/.claude/projects/` | Claude Code が生成するセッションデータ（JSONL）。**読み取りのみ** |
 | `~/.claude/chat-viewer-meta.json` | スター・タグ・メモの保存先（本ツールが作成） |
+| `~/.claude/chat-viewer-archive/projects/` | セッションデータのバックアップ（本ツールが作成） |
 
 > セッションデータ自体は変更しません。
+
+### セッションのバックアップ
+
+Claude Code は `cleanupPeriodDays`（既定 **30 日**）より古いセッションファイルを起動時に削除します。そのままでは 1 か月より前の会話はビューアに表示できなくなります。
+
+これを防ぐため、ビューアは起動時と `archive_interval_min` 分ごとに `~/.claude/projects/` のセッションファイルをバックアップ先へコピーします。
+
+- 元のファイルが消えても、バックアップから一覧・表示・検索ができます。サイドバーでは「保存分」の印が付きます
+- 同じセッションが両方にあるときは元のファイルを読みます
+- バックアップ先のファイルは削除しません。不要になったら手動で消してください
+- ビューアを起動していない間に 30 日を過ぎたファイルは守れません。Claude Code 側でも `~/.claude/settings.json` に `"cleanupPeriodDays": 3650` などを設定して、保存期間を延ばしておくことをおすすめします
 
 ---
 

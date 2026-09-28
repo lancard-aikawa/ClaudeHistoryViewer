@@ -184,25 +184,51 @@ def _search_message(obj: dict, query: str, search_type: str) -> dict | None:
 
 
 class ClaudeDataReader:
-    def __init__(self, claude_dir: Path):
+    def __init__(self, claude_dir: Path, archive_dir: Path | None = None):
         self.claude_dir = claude_dir
         self.projects_dir = claude_dir / "projects"
+        # バックアップ先（archive.py がコピーする）。元のファイルが消えてもここから読む
+        self.archive_projects_dir = archive_dir / "projects" if archive_dir else None
+
+    def _roots(self) -> list:
+        """読み込み元。先に書いた方が優先（元のファイル > バックアップ）"""
+        roots = [self.projects_dir]
+        if self.archive_projects_dir:
+            roots.append(self.archive_projects_dir)
+        return roots
+
+    def _project_ids(self) -> list:
+        ids = {}
+        for root in self._roots():
+            if root.is_dir():
+                for d in root.iterdir():
+                    if d.is_dir():
+                        ids.setdefault(d.name, None)
+        return list(ids)
+
+    def _session_files(self, project_id: str) -> dict:
+        """{session_id: (path, archived_only)} を返す。同じ ID は元のファイルを優先"""
+        files = {}
+        for i, root in enumerate(self._roots()):
+            proj_dir = root / project_id
+            if not proj_dir.is_dir():
+                continue
+            for f in proj_dir.glob("*.jsonl"):
+                if _is_session_file(f.stem) and f.stem not in files:
+                    files[f.stem] = (f, i > 0)
+        return files
 
     # ---- Projects ----
 
     def list_projects(self) -> list:
-        if not self.projects_dir.exists():
-            return []
         projects = []
-        for proj_dir in self.projects_dir.iterdir():
-            if not proj_dir.is_dir():
-                continue
-            cwd, first_ts, last_ts, session_count = self._project_summary(proj_dir)
+        for proj_id in self._project_ids():
+            cwd, first_ts, last_ts, session_count = self._project_summary(proj_id)
             if session_count == 0:
                 continue
             projects.append({
-                "id": proj_dir.name,
-                "cwd": cwd or proj_dir.name,
+                "id": proj_id,
+                "cwd": cwd or proj_id,
                 "session_count": session_count,
                 "first_activity": first_ts,
                 "last_activity": last_ts,
@@ -210,14 +236,12 @@ class ClaudeDataReader:
         projects.sort(key=lambda x: x["last_activity"] or "", reverse=True)
         return projects
 
-    def _project_summary(self, proj_dir: Path):
+    def _project_summary(self, project_id: str):
         cwd = None
         first_ts = None
         last_ts = None
         session_count = 0
-        for f in proj_dir.glob("*.jsonl"):
-            if not _is_session_file(f.stem):
-                continue
+        for f, _ in self._session_files(project_id).values():
             session_count += 1
             _, ts, _ = _read_session_meta(f)
             if ts:
@@ -232,19 +256,15 @@ class ClaudeDataReader:
     # ---- Sessions ----
 
     def list_sessions(self, project_id: str) -> list:
-        proj_dir = self.projects_dir / project_id
-        if not proj_dir.is_dir():
-            return []
         sessions = []
-        for f in proj_dir.glob("*.jsonl"):
-            if not _is_session_file(f.stem):
-                continue
+        for sid, (f, archived) in self._session_files(project_id).items():
             title, timestamp, msg_count = _read_session_meta(f)
             sessions.append({
-                "id": f.stem,
+                "id": sid,
                 "title": title,
                 "timestamp": timestamp,
                 "message_count": msg_count,
+                "archived": archived,
             })
         sessions.sort(key=lambda x: x["timestamp"] or "", reverse=True)
         return sessions
@@ -252,8 +272,9 @@ class ClaudeDataReader:
     # ---- Messages ----
 
     def get_messages(self, project_id: str, session_id: str) -> list:
-        f = self.projects_dir / project_id / f"{session_id}.jsonl"
-        if not f.exists():
+        f = next((p for p in (root / project_id / f"{session_id}.jsonl" for root in self._roots())
+                  if p.exists()), None)
+        if f is None:
             return []
         messages = []
         skill_expansion_pending = False
@@ -294,16 +315,10 @@ class ClaudeDataReader:
         q = query.lower()
         results = []
 
-        if project_id:
-            dirs = [(project_id, self.projects_dir / project_id)]
-        else:
-            dirs = [(d.name, d) for d in self.projects_dir.iterdir() if d.is_dir()]
+        proj_ids = [project_id] if project_id else self._project_ids()
 
-        for proj_id, proj_dir in dirs:
-            for f in proj_dir.glob("*.jsonl"):
-                if not _is_session_file(f.stem):
-                    continue
-                session_id = f.stem
+        for proj_id in proj_ids:
+            for session_id, (f, _) in self._session_files(proj_id).items():
                 title = session_id
                 hits = []
                 with open(f, encoding="utf-8", errors="replace") as fp:

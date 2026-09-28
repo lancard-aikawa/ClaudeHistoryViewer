@@ -31,6 +31,7 @@
       <option value="courier-new">Courier New</option>
       <option value="system">System UI</option>
     </select>
+    <button class="hbtn" id="btn-settings" title="設定">⚙ 設定</button>
     <button class="hbtn" id="btn-help" title="キーボードショートカット (?)">?</button>
   </div>
 
@@ -129,6 +130,24 @@
     <div class="memo-btns">
       <button class="btn btn-ghost" id="btn-memo-cancel">キャンセル</button>
       <button class="btn btn-primary" id="btn-memo-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div id="settings-modal">
+  <div id="settings-box">
+    <h3>⚙ 設定</h3>
+    <div id="settings-tabs">
+      <button class="settings-tab active" data-tab="viewer">ビューア</button>
+      <button class="settings-tab" data-tab="claude">Claude Code</button>
+      <button class="settings-tab" data-tab="raw">settings.json（閲覧）</button>
+    </div>
+    <div id="settings-body"></div>
+    <div id="settings-footer">
+      <span id="settings-status"></span>
+      <button class="btn btn-ghost" id="btn-settings-close">閉じる</button>
+      <button class="btn btn-primary" id="btn-settings-save">保存</button>
     </div>
   </div>
 </div>
