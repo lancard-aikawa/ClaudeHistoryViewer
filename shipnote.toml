@@ -1,0 +1,37 @@
+# Shipnote の設定。Pages の LP (/projects/<slug>/) に出す内容。
+# 書き換えたら `shipnote sync` で反映する。
+
+name = "ClaudeHistoryViewer"
+github = "lancard-aikawa/ClaudeHistoryViewer"
+# slug = "claudechat"   # LP の URL。省略すると name から作る
+
+# 一行の紹介 (トップの一覧と LP の見出し下に出る)
+tagline = "Claude Code のセッション履歴を LINE のようなチャット形式で表示する Python 製ビューア"
+
+# 二〜四文の説明
+description = "Claude Code の会話は `~/.claude/projects/` に JSONL 形式で保存されますが、そのままでは読み返しにくい形です。ClaudeHistoryViewer はこれをブラウザ上のチャット画面として表示し、過去のやり取りを追いやすくします。起動時と一定間隔でセッションファイルをバックアップするため、Claude Code の保存期間（既定 30 日）を過ぎて削除されたセッションも表示・検索できます。元のセッションデータは読み取るだけで変更しません。"
+
+features = [
+  "ユーザー発言を右、Claude の返答を左のバブルで表示。長文は「続きを見る」で折りたたみ、ツール呼び出しはチップで示す",
+  "Ctrl+K の全文検索で全プロジェクトを横断。結果はフォルダ→セッション→メッセージの階層で表示する",
+  "メッセージ / セッション / プロジェクト単位でスター・タグ・メモを記録し、スター一覧から該当箇所へジャンプできる",
+  "セッションを HTML / Markdown で保存。HTML は KaTeX を埋め込むのでオフラインでも数式を表示できる",
+  "Python 3.10 以上のみで動作し、外部ライブラリは不要。ダーク / ライトモードやフォントサイズの設定は保存される",
+]
+
+# 動く環境 (例: "Windows 10 / 11")
+platforms = "Windows / WSL / Linux / macOS"
+
+# リポジトリ内の画像のパス。LP に並ぶ
+screenshots = [
+  "images/Screenshot.png",
+]
+
+# false にするとトップの一覧から外す (LP とリリース記録は作る)
+listed = true
+
+# false にすると一覧と LP だけ載せ、リリース記録 (/posts/) は作らない (作ってあったものは消す)
+posts = true
+
+# true にすると Claude Code 前提のものとして、「作ったもの」ではなく /claudes/ の一覧に載せる
+claude = true
