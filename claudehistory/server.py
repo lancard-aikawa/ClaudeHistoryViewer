@@ -12,7 +12,7 @@ from .template import HTML_TEMPLATE
 
 # 変更してもビューアの再起動まで効かない設定
 RESTART_KEYS = {"port", "auto_open_browser", "archive_enabled", "archive_dir", "archive_interval_min",
-                "sessionvault_src"}
+                "sessionvault_src", "sessionvault_config"}
 
 STATIC_DIR = (Path(__file__).parent / "static").resolve()
 

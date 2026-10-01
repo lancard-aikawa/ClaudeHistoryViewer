@@ -27,9 +27,14 @@ SETTINGS_DEFAULTS: dict = {
     "archive_enabled": True,      # セッションのバックアップを取る
     "archive_dir": "",            # 保存先（空なら ~/.claude/chat-viewer-archive）
     "archive_interval_min": 10,   # バックアップを取り直す間隔（分）
-    # SessionVault の src フォルダ（例: C:/Repos/mywork/SessionVault/src）。読み込めればバックアップをそちらに任せ、
-    # 保存先は SessionVault の設定に従う（archive_dir は使わない）。空か読み込めなければビューア内蔵のバックアップ
+    # SessionVault の src フォルダ（例: C:/Repos/mywork/SessionVault/src）。空なら同梱のサブモジュール
+    # （vendor/SessionVault/src）を使う。読み込めればバックアップをそちらに任せ、保存先は SessionVault の設定に従う
+    # （archive_dir は使わない）。読み込めなければビューア内蔵のバックアップ
     "sessionvault_src": "",
+    # SessionVault の設定ファイル（sessionvault.json）。空なら読み込んだ SessionVault のリポジトリ直下。
+    # 単体で動かしている SessionVault（タスクスケジューラ）と同じ保管庫を使うときは、その sessionvault.json を書く。
+    # 設定に vault が無ければ、この設定ファイルの隣の vault/ を使う
+    "sessionvault_config": "",
 }
 
 def load_settings() -> dict:

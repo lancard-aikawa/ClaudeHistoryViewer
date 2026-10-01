@@ -82,11 +82,17 @@ Claude Code のセッション履歴を LINE のようなチャット形式で�
 ## インストール
 
 ```bash
-git clone https://github.com/lancard-aikawa/ClaudeHistoryViewer.git
+git clone --recursive https://github.com/lancard-aikawa/ClaudeHistoryViewer.git
 cd ClaudeHistoryViewer
 ```
 
-追加インストールは不要です。
+追加インストールは不要です。`--recursive` で、バックアップに使う [SessionVault](https://github.com/lancard-aikawa/SessionVault) も `vendor/SessionVault` に入ります。
+`--recursive` を付けずにクローンしたときや、SessionVault を新しくするときは次を実行します。
+
+```bash
+git submodule update --init          # 取っていなければ取る
+git submodule update --remote        # SessionVault を最新にする（そのあとビューアを再起動）
+```
 
 ---
 
@@ -286,12 +292,20 @@ Claude Code は `cleanupPeriodDays`（既定 **30 日**）より古いセッシ�
 
 #### SessionVault に任せる
 
-SessionVault（Claude Code のセッションを残し・検査し・直す CLI）があれば、バックアップをそちらに任せられます。
-`settings.json` の `sessionvault_src` に SessionVault の `src` フォルダを書きます（設定画面のバックアップからも変えられます。再起動後に反映）。
+[SessionVault](https://github.com/lancard-aikawa/SessionVault)（Claude Code のセッションを残し・検査し・直す CLI）は
+`vendor/SessionVault` にサブモジュールとして入っていて、読み込めればバックアップをそちらに任せます。設定は不要です。
+
+既定では、保管庫は `vendor/SessionVault/vault` にできます。SessionVault を別の場所にクローンしてタスクスケジューラで定期実行しているなど、
+**同じ保管庫を使いたいときは、その SessionVault の設定ファイルを指定します**（設定画面のバックアップからも変えられます。再起動後に反映）。
+指定しないと、保管庫が 2 つに分かれます。
 
 ```json
-"sessionvault_src": "C:/Repos/mywork/SessionVault/src"
+"sessionvault_config": "C:/Repos/mywork/SessionVault/sessionvault.json"
 ```
+
+- 設定ファイルに `vault` が書かれていなければ、その設定ファイルの隣の `vault/` を使います（SessionVault を単体で動かしたときと同じ場所）
+- 同梱のものではなく、別の場所の SessionVault を読み込むときは `sessionvault_src` にその `src` フォルダを書きます。
+  このときの設定ファイルの既定は、そのリポジトリ直下の `sessionvault.json` です
 
 - 内蔵のバックアップはセッション本体の JSONL を写すだけですが、SessionVault はサブエージェント・長いツール結果・memory も残し、
   元のファイルが縮んだり壊れたりしても前の版を世代として残します

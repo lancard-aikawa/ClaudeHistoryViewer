@@ -13,5 +13,6 @@
   "archive_enabled": true,
   "archive_dir": "",
   "archive_interval_min": 10,
-  "sessionvault_src": ""
+  "sessionvault_src": "",
+  "sessionvault_config": ""
 }

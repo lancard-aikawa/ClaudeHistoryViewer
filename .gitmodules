@@ -1,0 +1,3 @@
+[submodule "vendor/SessionVault"]
+	path = vendor/SessionVault
+	url = https://github.com/lancard-aikawa/SessionVault.git
