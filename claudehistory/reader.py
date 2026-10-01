@@ -21,6 +21,28 @@ def _read_cwd(path: Path) -> str | None:
         pass
     return None
 
+def _read_head_meta(path: Path) -> tuple:
+    """(cwd, 最初の発言の時刻) を返す。両方そろった時点で読むのをやめる。
+    プロジェクト一覧はこれだけで足りる（全文を読むと、履歴が数百 MB あるので一覧に 10 秒以上かかった）"""
+    cwd = None
+    timestamp = None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                if cwd is None:
+                    cwd = obj.get("cwd") or None
+                if timestamp is None and obj.get("type") in ("user", "assistant"):
+                    timestamp = obj.get("timestamp")
+                if cwd and timestamp:
+                    break
+    except Exception:
+        pass
+    return cwd, timestamp
+
 def _read_session_meta(path: Path) -> tuple:
     title = path.stem
     timestamp = None
@@ -190,6 +212,21 @@ class ClaudeDataReader:
         # バックアップ（SessionVault の mirror や、内蔵のバックアップ）。projects と同じ木の形。
         # 元のファイルが消えてもここから読む
         self.backup_roots = list(backup_roots or [])
+        # {path: ((size, mtime_ns), (cwd, timestamp))}。変わっていないファイルは読み直さない
+        self._head_cache = {}
+
+    def _head_meta(self, path: Path) -> tuple:
+        try:
+            st = path.stat()
+        except OSError:
+            return None, None
+        key = (st.st_size, st.st_mtime_ns)
+        hit = self._head_cache.get(path)
+        if hit and hit[0] == key:
+            return hit[1]
+        meta = _read_head_meta(path)
+        self._head_cache[path] = (key, meta)
+        return meta
 
     def _roots(self) -> list:
         """読み込み元。先に書いた方が優先（元のファイル > バックアップ）"""
@@ -249,14 +286,14 @@ class ClaudeDataReader:
         session_count = 0
         for f, _ in self._session_files(project_id).values():
             session_count += 1
-            _, ts, _ = _read_session_meta(f)
+            file_cwd, ts = self._head_meta(f)
             if ts:
                 if first_ts is None or ts < first_ts:
                     first_ts = ts
                 if last_ts is None or ts > last_ts:
                     last_ts = ts
             if cwd is None:
-                cwd = _read_cwd(f)
+                cwd = file_cwd
         return cwd, first_ts, last_ts, session_count
 
     # ---- Sessions ----
