@@ -268,7 +268,7 @@ function renderMessages(msgs) {
     return;
   }
   // If first non-plan message is from assistant, prior context was compacted
-  const firstReal = msgs.find(m => !m.plan_content);
+  const firstReal = msgs.find(m => !m.plan_content && (m.role === 'user' || m.role === 'assistant'));
   if (firstReal && firstReal.role === 'assistant') {
     const notice = el('div', 'compaction-notice');
     notice.innerHTML = '<span>〔以前の会話は省略されています〕</span>';
@@ -283,6 +283,34 @@ function renderMessages(msgs) {
 }
 
 function renderMessage(msg) {
+  // 人の発言ではないもの: 中断・裏の作業の完了 (system) は中央の小さな行、
+  // 文脈が長くなったときの要約 (summary) は折りたたんだ板にする
+  if (msg.role === 'system') {
+    const row = el('div', 'compaction-notice sys-note');
+    row.dataset.uuid = msg.uuid;
+    const span = el('span');
+    span.textContent = `⚙ ${msg.text}`;
+    span.title = fmtTime(msg.timestamp);
+    row.appendChild(span);
+    return row;
+  }
+  if (msg.role === 'summary') {
+    const row = el('div', 'msg-row');
+    row.dataset.uuid = msg.uuid;
+    const ts = el('div', `msg-ts${S.showTs ? '' : ' hidden'}`);
+    ts.textContent = fmtTime(msg.timestamp);
+    const details = document.createElement('details');
+    details.className = 'plan-block';
+    details.innerHTML = `<summary>📝 ここまでの会話の要約（Claude Code が作成。クリックで展開）</summary>`;
+    const body = el('div', 'plan-block-body');
+    const bodyText = el('div', 'bubble-text');
+    bodyText.innerHTML = renderMd(msg.text);
+    body.appendChild(bodyText);
+    details.appendChild(body);
+    row.appendChild(ts);
+    row.appendChild(details);
+    return row;
+  }
   // Plan-mode injection: display as collapsible plan document, not a chat bubble
   if (msg.plan_content) {
     const row = el('div', 'msg-row');
@@ -1568,6 +1596,12 @@ body{font-family:var(--font-family);font-size:var(--font-size);background:var(--
 .export-header h1{font-size:17px;font-weight:700;margin-bottom:4px}
 .export-meta{font-size:12px;color:var(--text-muted)}
 #chat-messages{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.compaction-notice{display:flex;align-items:center;justify-content:center;padding:6px 0 2px}
+.compaction-notice span{font-size:12px;color:var(--text-muted);background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:3px 12px}
+.plan-block{margin:4px 0;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--sidebar-bg)}
+.plan-block summary{padding:8px 12px;cursor:pointer;font-size:12px;color:var(--text-muted);list-style:none}
+.plan-block summary::marker{display:none}
+.plan-block-body{padding:10px 14px;border-top:1px solid var(--border)}
 .msg-row{display:flex;flex-direction:column;gap:4px}
 .msg-row.user{align-items:flex-end}
 .msg-row.assistant{align-items:flex-start}
@@ -1638,7 +1672,12 @@ function exportMarkdown() {
 
   for (const msg of S.messages) {
     if (!msg.text) continue;  // テキストのないメッセージ（ツールのみ等）はスキップ
-    const role = msg.role === 'user' ? '## 👤 あなた' : '## 🤖 Claude';
+    if (msg.role === 'system') {
+      lines.push(`> ⚙ ${msg.text}`, '');
+      continue;
+    }
+    const role = msg.role === 'user' ? '## 👤 あなた'
+      : msg.role === 'summary' ? '## 📝 ここまでの会話の要約（Claude Code が作成）' : '## 🤖 Claude';
     const ts = msg.timestamp ? `  \`${new Date(msg.timestamp).toLocaleString('ja-JP')}\`` : '';
     lines.push(role + ts);
     lines.push('');

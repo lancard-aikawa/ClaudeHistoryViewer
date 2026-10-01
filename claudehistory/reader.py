@@ -65,9 +65,43 @@ def _read_session_meta(path: Path) -> tuple:
         pass
     return title, timestamp, msg_count
 
+# user の行に Claude Code が差し込むタグ。人が打ったものではないので消す（RepoTether の sessions.rs と同じ一覧）
+_NOISE_TAGS = ("system-reminder", "ide_selection", "ide_opened_file", "ide_diagnostics",
+               "local-command-stdout", "local-command-stderr", "local-command-caveat",
+               "command-message", "command-args")
+_NOISE_RE = [re.compile(rf"<{t}(?:\s[^>]*)?>.*?</{t}>", re.DOTALL) for t in _NOISE_TAGS]
+# /mcp などのコマンドは名前だけ残す
+_COMMAND_RE = re.compile(r"<command-name>(.*?)</command-name>", re.DOTALL)
+_TASK_SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
+
+
+def _strip_user_noise(t: str) -> str:
+    for r in _NOISE_RE:
+        t = r.sub("", t)
+    return _COMMAND_RE.sub(r"\1", t).strip()
+
+
+def _system_note(obj: dict, text: str) -> dict:
+    """人の発言ではないが、会話の流れとして見せたいもの（中断・裏の作業の完了）"""
+    return {"uuid": obj.get("uuid", ""), "role": "system", "timestamp": obj.get("timestamp", ""),
+            "text": text, "thinking": [], "tool_uses": [], "images": [], "plan_content": None}
+
+
 def _process_message(obj: dict) -> dict | None:
     role = obj.get("type")
     raw_content = obj.get("message", {}).get("content", [])
+
+    if role == "user":
+        # ハーネスが差し込んだもの（Skill の展開文・画像の大きさの注記・別セッションからの連絡など）。
+        # 2026-10-01 の実データでは 142 件すべて文字だけで、画像は別の行にある
+        if obj.get("isMeta"):
+            return None
+        # 文脈が長くなって要約したときの要約文。Claude Code が書いたもので、人の発言ではない
+        if obj.get("isCompactSummary"):
+            text = raw_content if isinstance(raw_content, str) else "\n".join(
+                b.get("text", "") for b in raw_content if isinstance(b, dict) and b.get("type") == "text")
+            return {"uuid": obj.get("uuid", ""), "role": "summary", "timestamp": obj.get("timestamp", ""),
+                    "text": text.strip(), "thinking": [], "tool_uses": [], "images": [], "plan_content": None}
 
     # Normalize to list
     if isinstance(raw_content, str):
@@ -87,9 +121,20 @@ def _process_message(obj: dict) -> dict | None:
         btype = block.get("type")
         if btype == "text":
             t = block.get("text", "")
-            # Filter out ide_opened_file system injections
-            t = re.sub(r'<ide_opened_file>.*?</ide_opened_file>', '', t, flags=re.DOTALL).strip()
-            t = re.sub(r'<ide_selection>.*?</ide_selection>', '', t, flags=re.DOTALL).strip()
+            if role == "user":
+                stripped = t.lstrip()
+                # 裏の作業（バックグラウンドのコマンドやサブエージェント）の完了通知
+                if stripped.startswith("<task-notification>"):
+                    m = _TASK_SUMMARY_RE.search(t)
+                    return _system_note(obj, "裏の作業: " + (m.group(1).strip() if m else "完了の通知"))
+                # 中断の印 ([Request interrupted by user] など)
+                if stripped.startswith("[Request interrupted"):
+                    return _system_note(obj, "中断しました" + (
+                        "（ツールの実行中）" if "tool use" in stripped else ""))
+                t = _strip_user_noise(t)
+            else:
+                t = re.sub(r'<ide_opened_file>.*?</ide_opened_file>', '', t, flags=re.DOTALL).strip()
+                t = re.sub(r'<ide_selection>.*?</ide_selection>', '', t, flags=re.DOTALL).strip()
             if t:
                 text_parts.append(t)
                 has_user_text = True
@@ -119,7 +164,8 @@ def _process_message(obj: dict) -> dict | None:
                             "data": src.get("data", ""),
                         })
 
-    # Skip user messages that are only tool results (no real text)
+    # Skip user messages that are only tool results (no real text)。
+    # images はツール結果の中の画像 (スクリーンショットなど) なので、それだけでは人の発言にしない
     if role == "user" and not has_user_text:
         return None
 
@@ -320,7 +366,6 @@ class ClaudeDataReader:
         if f is None:
             return []
         messages = []
-        skill_expansion_pending = False
         with open(f, encoding="utf-8", errors="replace") as fp:
             for line in fp:
                 line = line.strip()
@@ -333,20 +378,10 @@ class ClaudeDataReader:
                     # Skip lines that belong to a different session (cross-session contamination)
                     if obj.get("sessionId") and obj.get("sessionId") != session_id:
                         continue
-                    # Track Skill tool_use in assistant messages; the following user text
-                    # message is the skill expansion injected by the harness, not real user input.
-                    if obj.get("type") == "assistant":
-                        content = obj.get("message", {}).get("content", [])
-                        skill_expansion_pending = isinstance(content, list) and any(
-                            isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Skill"
-                            for b in content
-                        )
+                    # Skill の展開文は isMeta なので _process_message が落とす。以前は「Skill の直後の user 行」という
+                    # 位置で落としていたが、展開文が isMeta で先に消えると、次の本物の発言を落としてしまう
                     msg = _process_message(obj)
                     if msg:
-                        if msg["role"] == "user" and skill_expansion_pending:
-                            # This is the skill-expanded prompt injected as a user message; skip it.
-                            skill_expansion_pending = False
-                            continue
                         messages.append(msg)
                 except Exception:
                     pass
@@ -374,6 +409,10 @@ class ClaudeDataReader:
                             if obj.get("type") == "ai-title":
                                 title = obj.get("aiTitle", title)
                             elif obj.get("type") in ("user", "assistant"):
+                                # 画面に出さない行 (isMeta・通知・タグだけの行) は探さない
+                                shown = _process_message(obj)
+                                if not shown or shown["role"] != obj.get("type"):
+                                    continue
                                 hit = _search_message(obj, q, search_type)
                                 if hit:
                                     hit.update({"project_id": proj_id, "session_id": session_id})
