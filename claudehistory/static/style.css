@@ -293,7 +293,9 @@ div.math-raw{display:block;margin:.4em 0;text-align:center}
 #settings-tabs{display:flex;gap:4px;border-bottom:1px solid var(--border)}
 .settings-tab{padding:6px 12px;font-size:13px;border:none;background:none;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
 .settings-tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
-#settings-body{overflow-y:auto;flex:1;min-height:120px}
+/* Firefox（Windows 11）はスクロールバーを中身の上に重ねて描き、::-webkit-scrollbar も効かない。
+   右端の入力欄・チェックボックスに被らないよう、スクロールバーの分の余白を空ける */
+#settings-body{overflow-y:auto;flex:1;min-height:120px;padding-right:14px;scrollbar-width:thin}
 .set-path{font-size:11px;color:var(--text-muted);margin:4px 0 8px;word-break:break-all}
 .set-group{font-size:12px;font-weight:600;color:var(--text-muted);margin:12px 0 4px}
 .set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
