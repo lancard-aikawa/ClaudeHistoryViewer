@@ -6,11 +6,13 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import archive
 from .config import SETTINGS_FILE, load_settings, save_settings, validate_settings
 from .template import HTML_TEMPLATE
 
 # 変更してもビューアの再起動まで効かない設定
-RESTART_KEYS = {"port", "auto_open_browser", "archive_enabled", "archive_dir", "archive_interval_min"}
+RESTART_KEYS = {"port", "auto_open_browser", "archive_enabled", "archive_dir", "archive_interval_min",
+                "sessionvault_src"}
 
 STATIC_DIR = (Path(__file__).parent / "static").resolve()
 
@@ -23,7 +25,7 @@ _CONTENT_TYPES = {
 }
 
 
-def make_handler(reader, meta, cfg, claude_settings):
+def make_handler(reader, meta, cfg, claude_settings, memory):
     _origin = f"http://localhost:{cfg['port']}"
 
     class Handler(BaseHTTPRequestHandler):
@@ -90,6 +92,16 @@ def make_handler(reader, meta, cfg, claude_settings):
                     self._json({"ok": False})
             elif path == "/api/meta":
                 self._json(meta.get_all())
+            elif path == "/api/memory":
+                self._json(memory.list(reader._project_ids()))
+            elif path == "/api/memory/file":
+                found = memory.read(qs.get("key", [""])[0])
+                if found is None:
+                    self._send(404, "text/plain", b"Not Found")
+                else:
+                    self._json(found)
+            elif path == "/api/backup-status":
+                self._json(archive.STATUS)
             elif path == "/api/settings":
                 # 起動設定（port等）はブラウザ側に渡さない
                 pub = {k: v for k, v in cfg.items() if k not in ("port", "auto_open_browser")}

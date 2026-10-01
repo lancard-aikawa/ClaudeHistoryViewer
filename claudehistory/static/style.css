@@ -252,6 +252,13 @@ div.math-raw{display:block;margin:.4em 0;text-align:center}
 .starred-item:hover{background:var(--session-hover)}
 .starred-item-title{font-size:13px;font-weight:500}
 .starred-item-meta{font-size:11px;color:var(--text-muted);margin-top:2px}
+#memory-panel{position:fixed;inset:0;z-index:100;align-items:flex-start;justify-content:center;padding-top:60px;background:rgba(0,0,0,.4);display:none}
+#memory-panel.open{display:flex}
+#memory-box{background:var(--sidebar-bg);border-radius:12px;width:760px;max-width:92vw;max-height:84vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.memory-text{white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.55;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:6px 0 10px;max-height:40vh;overflow:auto}
+.memory-back{font-size:12px;opacity:.75;margin-bottom:6px}
+.memory-back:hover{opacity:1}
+.memory-gone{color:#c0392b}
 .starred-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
 /* ── Memo modal ── */
 #memo-modal{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5);display:none}

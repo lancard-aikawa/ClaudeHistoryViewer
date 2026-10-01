@@ -184,35 +184,41 @@ def _search_message(obj: dict, query: str, search_type: str) -> dict | None:
 
 
 class ClaudeDataReader:
-    def __init__(self, claude_dir: Path, archive_dir: Path | None = None):
+    def __init__(self, claude_dir: Path, backup_roots: list | None = None):
         self.claude_dir = claude_dir
         self.projects_dir = claude_dir / "projects"
-        # バックアップ先（archive.py がコピーする）。元のファイルが消えてもここから読む
-        self.archive_projects_dir = archive_dir / "projects" if archive_dir else None
+        # バックアップ（SessionVault の mirror や、内蔵のバックアップ）。projects と同じ木の形。
+        # 元のファイルが消えてもここから読む
+        self.backup_roots = list(backup_roots or [])
 
     def _roots(self) -> list:
         """読み込み元。先に書いた方が優先（元のファイル > バックアップ）"""
-        roots = [self.projects_dir]
-        if self.archive_projects_dir:
-            roots.append(self.archive_projects_dir)
-        return roots
+        return [self.projects_dir, *self.backup_roots]
 
     def _project_ids(self) -> list:
+        """プロジェクトのフォルダ名。C--x と c--x は同じプロジェクト（Claude Code が大文字・小文字を揺らす）。
+        先に見つけた綴りを使う"""
         ids = {}
         for root in self._roots():
             if root.is_dir():
                 for d in root.iterdir():
                     if d.is_dir():
-                        ids.setdefault(d.name, None)
-        return list(ids)
+                        ids.setdefault(d.name.casefold(), d.name)
+        return list(ids.values())
+
+    def _project_dirs(self, project_id: str) -> list:
+        """[(root の番号, そのプロジェクトのフォルダ)]。大文字・小文字を無視して探す"""
+        key = project_id.casefold()
+        out = []
+        for i, root in enumerate(self._roots()):
+            if root.is_dir():
+                out += [(i, d) for d in root.iterdir() if d.is_dir() and d.name.casefold() == key]
+        return out
 
     def _session_files(self, project_id: str) -> dict:
         """{session_id: (path, archived_only)} を返す。同じ ID は元のファイルを優先"""
         files = {}
-        for i, root in enumerate(self._roots()):
-            proj_dir = root / project_id
-            if not proj_dir.is_dir():
-                continue
+        for i, proj_dir in self._project_dirs(project_id):
             for f in proj_dir.glob("*.jsonl"):
                 if _is_session_file(f.stem) and f.stem not in files:
                     files[f.stem] = (f, i > 0)
@@ -272,7 +278,7 @@ class ClaudeDataReader:
     # ---- Messages ----
 
     def get_messages(self, project_id: str, session_id: str) -> list:
-        f = next((p for p in (root / project_id / f"{session_id}.jsonl" for root in self._roots())
+        f = next((p for p in (d / f"{session_id}.jsonl" for _, d in self._project_dirs(project_id))
                   if p.exists()), None)
         if f is None:
             return []

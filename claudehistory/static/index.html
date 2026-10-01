@@ -18,6 +18,7 @@
     <h1>💬 Claude History Viewer</h1>
     <button class="hbtn" id="btn-search" title="検索 (Ctrl+K)">🔍 検索</button>
     <button class="hbtn" id="btn-starred" title="スター一覧">⭐ スター</button>
+    <button class="hbtn" id="btn-memory" title="memory と、それを書いた会話">🧠 メモリ</button>
     <button class="hbtn" id="btn-ts" title="時刻表示切替">🕐 時刻</button>
     <button class="hbtn" id="btn-theme" title="ダーク/ライト切替">🌙</button>
     <button class="hbtn" id="btn-font-down" title="文字小">A-</button>
@@ -118,6 +119,17 @@
       <button id="btn-starred-close" style="font-size:18px">✕</button>
     </div>
     <div class="panel-body" id="starred-body"></div>
+  </div>
+</div>
+
+<!-- Memory panel -->
+<div id="memory-panel">
+  <div id="memory-box">
+    <div class="panel-header">
+      <span id="memory-title">🧠 メモリ</span>
+      <button id="btn-memory-close" style="font-size:18px">✕</button>
+    </div>
+    <div class="panel-body" id="memory-body"></div>
   </div>
 </div>
 

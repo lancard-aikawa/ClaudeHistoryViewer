@@ -11,12 +11,13 @@ import webbrowser
 from http.server import HTTPServer
 from pathlib import Path
 
-from claudehistory.archive import start_archive_thread
+from claudehistory.archive import load_sessionvault, sessionvault_root, start_archive_thread
 from claudehistory.claude_settings import ClaudeSettings
 from claudehistory.config import (
     ARCHIVE_DIRNAME, DEFAULT_CLAUDE_DIR, META_FILENAME, SETTINGS_FILE, load_settings,
 )
 from claudehistory.reader import ClaudeDataReader
+from claudehistory.memory import MemoryIndex
 from claudehistory.meta import MetaStore
 from claudehistory.server import make_handler
 
@@ -39,22 +40,33 @@ def main():
     # コマンドライン引数で settings.json の値を上書き
     cfg["port"] = args.port
 
-    archive_dir = None
+    # バックアップの読み込み元。元のファイルが消えてもここから読む（先に書いた方が優先）
+    backup_roots = []
+    archive_dir = (Path(cfg["archive_dir"]).expanduser() if cfg["archive_dir"]
+                   else claude_dir / ARCHIVE_DIRNAME)
+    vault = None
     if cfg["archive_enabled"]:
-        archive_dir = (Path(cfg["archive_dir"]).expanduser() if cfg["archive_dir"]
-                       else claude_dir / ARCHIVE_DIRNAME)
+        sv = load_sessionvault(cfg["sessionvault_src"])
+        if sv:
+            vault = sessionvault_root(sv)
+            backup_roots.append(vault / "mirror")
         start_archive_thread(claude_dir / "projects", archive_dir / "projects",
-                             max(1, cfg["archive_interval_min"]) * 60)
+                             max(1, cfg["archive_interval_min"]) * 60, sv)
+    # 内蔵のバックアップが前に写したものも、SessionVault に移ったあと読めるよう残す
+    backup_roots.append(archive_dir / "projects")
 
-    reader = ClaudeDataReader(claude_dir, archive_dir)
+    reader = ClaudeDataReader(claude_dir, backup_roots)
     meta = MetaStore(claude_dir / META_FILENAME)
-    handler = make_handler(reader, meta, cfg, ClaudeSettings(claude_dir))
+    handler = make_handler(reader, meta, cfg, ClaudeSettings(claude_dir),
+                           MemoryIndex(claude_dir / "projects", vault))
 
     server = HTTPServer(("127.0.0.1", args.port), handler)
     url = f"http://localhost:{args.port}"
     print(f"Claude History Viewer: {url}")
     print(f"設定ファイル: {SETTINGS_FILE}")
-    if archive_dir:
+    if vault:
+        print(f"バックアップ先: {vault}（SessionVault）")
+    elif cfg["archive_enabled"]:
         print(f"バックアップ先: {archive_dir}")
     print("停止: Ctrl+C")
 

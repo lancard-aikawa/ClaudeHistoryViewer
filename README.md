@@ -267,7 +267,8 @@ python claude_chat_viewer.py --no-browser
 |---|---|
 | `~/.claude/projects/` | Claude Code が生成するセッションデータ（JSONL）。**読み取りのみ** |
 | `~/.claude/chat-viewer-meta.json` | スター・タグ・メモの保存先（本ツールが作成） |
-| `~/.claude/chat-viewer-archive/projects/` | セッションデータのバックアップ（本ツールが作成） |
+| `~/.claude/chat-viewer-archive/projects/` | セッションデータのバックアップ（内蔵のバックアップが作成） |
+| SessionVault の保管庫（`mirror/`・`index/memory.json`） | SessionVault を使うときのバックアップと memory の索引 |
 
 > セッションデータ自体は変更しません。
 
@@ -281,6 +282,30 @@ Claude Code は `cleanupPeriodDays`（既定 **30 日**）より古いセッシ�
 - 同じセッションが両方にあるときは元のファイルを読みます
 - バックアップ先のファイルは削除しません。不要になったら手動で消してください
 - ビューアを起動していない間に 30 日を過ぎたファイルは守れません。Claude Code 側でも `~/.claude/settings.json` に `"cleanupPeriodDays": 3650` などを設定して、保存期間を延ばしておくことをおすすめします
+- バックアップの状況（最後に取った時刻と結果）は 設定 → ビューア の一番下に出ます
+
+#### SessionVault に任せる
+
+SessionVault（Claude Code のセッションを残し・検査し・直す CLI）があれば、バックアップをそちらに任せられます。
+`settings.json` の `sessionvault_src` に SessionVault の `src` フォルダを書きます（設定画面のバックアップからも変えられます。再起動後に反映）。
+
+```json
+"sessionvault_src": "C:/Repos/mywork/SessionVault/src"
+```
+
+- 内蔵のバックアップはセッション本体の JSONL を写すだけですが、SessionVault はサブエージェント・長いツール結果・memory も残し、
+  元のファイルが縮んだり壊れたりしても前の版を世代として残します
+- 保存先は SessionVault の設定（`sessionvault.json` の `vault`）に従い、`archive_dir` は使いません。前に内蔵のバックアップで写したものは、引き続き `archive_dir` から読みます
+- SessionVault のタスクスケジューラの定期実行と重なったときは、その回を見送って次の回に取ります
+- 読み込めないとき（フォルダが違う、など）は内蔵のバックアップで動きます
+
+### メモリ
+
+ヘッダーの「🧠 メモリ」で、Claude Code の memory（`~/.claude/projects/<プロジェクト>/memory/*.md`）を一覧できます。
+
+- 各 memory を開くと本文と、それを書いた（Write / Edit した）会話の一覧が出ます。会話を押すとその会話を開きます
+- どの会話で書いたかは SessionVault の索引（`<保管庫>/index/memory.json`）から読みます。SessionVault を使っていなければ一覧と本文だけです
+- Claude Code から消えた memory も、保管庫に残っていれば本文を表示します
 
 ---
 

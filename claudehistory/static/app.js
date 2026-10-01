@@ -992,6 +992,119 @@ async function openStarredPanel() {
   document.getElementById('starred-panel').classList.add('open');
 }
 
+// ── Memory panel ──
+// memory（~/.claude/projects/<p>/memory/*.md）と、それを Write / Edit した会話。索引は SessionVault が作る
+const MEM = { data: null };
+
+function projLabelOf(pid) {
+  const projMeta = (S.meta.projects || {})[pid] || {};
+  return projMeta.label || shortPath((S.projects.find(p => p.id === pid) || {}).cwd || pid);
+}
+
+async function openMemoryPanel() {
+  MEM.data = await api('/api/memory');
+  renderMemoryList();
+  document.getElementById('memory-panel').classList.add('open');
+}
+
+function closeMemoryPanel() {
+  document.getElementById('memory-panel').classList.remove('open');
+}
+
+function renderMemoryList() {
+  const body = document.getElementById('memory-body');
+  const d = MEM.data;
+  document.getElementById('memory-title').textContent = '🧠 メモリ';
+  body.innerHTML = '';
+  if (!d.vault) {
+    body.appendChild(textEl('div', 'starred-item-meta',
+      'SessionVault を使っていないので、どの会話で書いたかは出せません（設定 → バックアップ）'));
+  } else if (!d.generated) {
+    body.appendChild(textEl('div', 'starred-item-meta', '索引はまだありません。次のバックアップのあとに出ます'));
+  }
+  if (!d.items.length) {
+    body.innerHTML += '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">memory がありません</div>';
+    return;
+  }
+  let last = null;
+  for (const it of d.items) {
+    if (it.project !== last) {
+      last = it.project;
+      body.appendChild(textEl('div', 'starred-section-title', '📁 ' + projLabelOf(it.project)));
+    }
+    const item = el('div', 'starred-item');
+    const state = it.exists ? '' : '<span class="memory-gone">（消えています。保管庫の版を表示）</span>';
+    const n = it.writes.length;
+    const latest = n ? it.writes[n - 1].timestamp : null;
+    item.innerHTML = `
+      <div class="starred-item-title">${esc(it.name)} ${state}</div>
+      <div class="starred-item-meta">${n ? `書いた会話 ${new Set(it.writes.map(w => w.session)).size} 件・書き込み ${n} 回・最後 ${esc(fmtTime(latest))}` : '書いた会話は不明'}</div>`;
+    item.addEventListener('click', () => openMemoryDetail(it));
+    body.appendChild(item);
+  }
+}
+
+function fmtTime(ts) {
+  return ts ? new Date(ts).toLocaleString() : '';
+}
+
+async function openMemoryDetail(it) {
+  const body = document.getElementById('memory-body');
+  document.getElementById('memory-title').textContent = `🧠 ${it.name}`;
+  body.innerHTML = '';
+  const back = el('button', 'memory-back');
+  back.textContent = '← 一覧へ';
+  back.addEventListener('click', renderMemoryList);
+  body.appendChild(back);
+  body.appendChild(textEl('div', 'starred-item-meta', '📁 ' + projLabelOf(it.project)));
+
+  const r = await fetch(`/api/memory/file?key=${encodeURIComponent(it.key)}`);
+  const pre = el('div', 'memory-text');
+  if (r.ok) {
+    const f = await r.json();
+    pre.textContent = (f.from_backup ? '（保管庫の版）\n' : '') + f.text;
+  } else {
+    pre.textContent = '本文が見つかりません';
+  }
+  body.appendChild(pre);
+
+  body.appendChild(textEl('div', 'starred-section-title', `書いた会話（${it.writes.length}）`));
+  // 新しい順。同じ会話の書き込みはまとめる
+  const bySession = new Map();
+  for (const w of [...it.writes].reverse()) {
+    const k = `${w.project}/${w.session}`;
+    if (!bySession.has(k)) bySession.set(k, { ...w, times: [] });
+    bySession.get(k).times.push(`${w.tool}${w.ok ? '' : '（失敗）'} ${fmtTime(w.timestamp)}`);
+  }
+  // 会話のタイトルはプロジェクトごとのセッション一覧から引く
+  const titles = {};
+  await Promise.all([...new Set([...bySession.values()].map(w => w.project))].map(async pid => {
+    for (const s of await api(`/api/sessions?project=${encodeURIComponent(pid)}`)) titles[`${pid}/${s.id}`] = s.title;
+  }));
+  for (const w of bySession.values()) {
+    const item = el('div', 'starred-item');
+    const title = titles[`${w.project}/${w.session}`] || `${w.session.slice(0, 8)}…（見つかりません）`;
+    item.innerHTML = `
+      <div class="starred-item-title">💬 ${esc(title)}${w.subagent ? '（サブエージェント）' : ''}</div>
+      <div class="starred-item-meta">📁 ${esc(projLabelOf(w.project))}</div>
+      <div class="starred-item-meta">${w.times.map(esc).join('<br>')}</div>`;
+    item.addEventListener('click', async () => {
+      closeMemoryPanel();
+      await loadSession(w.project, w.session);
+    });
+    body.appendChild(item);
+  }
+  if (!it.writes.length) {
+    body.appendChild(textEl('div', 'starred-item-meta', '索引に書き込みの記録がありません（手で書いたか、索引より前のもの）'));
+  }
+}
+
+document.getElementById('btn-memory').addEventListener('click', openMemoryPanel);
+document.getElementById('btn-memory-close').addEventListener('click', closeMemoryPanel);
+document.getElementById('memory-panel').addEventListener('click', e => {
+  if (e.target === document.getElementById('memory-panel')) closeMemoryPanel();
+});
+
 // ── Prev / Next session ──
 document.getElementById('btn-prev-session').addEventListener('click', () => {
   if (!S.currentProject) return;
@@ -1088,8 +1201,11 @@ const VIEWER_FIELDS = [
   { group: '表示', key: 'show_tool_chips', label: 'ツール呼び出しを表示', type: 'bool' },
   { group: '検索', key: 'max_search_results', label: '検索結果の最大件数', type: 'int' },
   { group: 'バックアップ', key: 'archive_enabled', label: 'セッションのバックアップを取る', type: 'bool', restart: true },
-  { group: 'バックアップ', key: 'archive_dir', label: '保存先', type: 'str', restart: true,
-    placeholder: '~/.claude/chat-viewer-archive', help: '空なら ~/.claude/chat-viewer-archive' },
+  { group: 'バックアップ', key: 'sessionvault_src', label: 'SessionVault の src フォルダ', type: 'str', restart: true,
+    placeholder: 'C:/Repos/mywork/SessionVault/src',
+    help: '読み込めればバックアップを SessionVault に任せる（サブエージェント・memory も残り、前の版が世代として残る）。保存先は SessionVault の設定に従う' },
+  { group: 'バックアップ', key: 'archive_dir', label: '保存先（内蔵のバックアップ）', type: 'str', restart: true,
+    placeholder: '~/.claude/chat-viewer-archive', help: '空なら ~/.claude/chat-viewer-archive。SessionVault を使うときも、前に写したものはここから読む' },
   { group: 'バックアップ', key: 'archive_interval_min', label: 'バックアップの間隔（分）', type: 'int', restart: true },
   { group: '起動', key: 'port', label: 'ポート番号', type: 'int', restart: true },
   { group: '起動', key: 'auto_open_browser', label: '起動時にブラウザを開く', type: 'bool', restart: true },
@@ -1104,7 +1220,7 @@ function textEl(tag, cls, text) {
 }
 
 async function openSettings() {
-  SET.data = await api('/api/config');
+  [SET.data, SET.backup] = await Promise.all([api('/api/config'), api('/api/backup-status')]);
   setSettingsStatus('');
   document.getElementById('settings-modal').classList.add('open');
   renderSettingsTab();
@@ -1189,6 +1305,13 @@ function renderViewerSettings(body) {
   for (const f of VIEWER_FIELDS) {
     groupHeader(body, f.group, state);
     settingRow(body, f, v.values[f.key], makeInput(f.type, v.values[f.key], f));
+  }
+  const b = SET.backup;
+  if (b && b.engine) {
+    body.appendChild(textEl('div', 'set-group', 'バックアップの状況'));
+    body.appendChild(textEl('div', 'set-note',
+      `${b.engine} / ${b.store}\n最後の実行: ${b.last_run ? new Date(b.last_run).toLocaleString() : 'まだ'}（${b.summary || '—'}）`));
+    for (const e of (b.errors || []).slice(0, 5)) body.appendChild(textEl('div', 'set-note memory-gone', e));
   }
 }
 
@@ -1288,6 +1411,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     document.getElementById('search-panel').classList.remove('open');
     document.getElementById('starred-panel').classList.remove('open');
+    document.getElementById('memory-panel').classList.remove('open');
     document.getElementById('memo-modal').classList.remove('open');
     document.getElementById('lightbox').classList.remove('open');
     document.getElementById('help-modal').classList.remove('open');
