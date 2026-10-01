@@ -1,0 +1,96 @@
+name: release
+
+# タグを打つ = リリース。版はタグが正 (コードには版を書いていない)。
+#   git tag v1.0.0 && git push origin v1.0.0
+# CHANGELOG.md に「## <版>」の節が無ければ落とす。
+#
+# zip には、サブモジュールの SessionVault (vendor/SessionVault) も入れる。
+# GitHub が自動で付けるソースの zip にはサブモジュールの中身が入らないため。
+# workflow_dispatch で手動実行すると zip を作るだけで、Actions の artifact に置く (Release は作らない)。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: 版を決める
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-dev"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "name=ClaudeHistoryViewer-$version" >> "$GITHUB_OUTPUT"
+
+      # 3.10 (対応する最も古い版) で、起動に要るものが全部読み込めるかと、同梱の SessionVault のテスト
+      - name: 確かめる
+        run: |
+          # sessionvault_src が空なら同梱のサブモジュールを読み込む (PYTHONPATH は足さない)
+          python -c "import claude_chat_viewer, claudehistory.archive as a; assert a.load_sessionvault('') is not None, 'SessionVault を読み込めません'"
+          cd vendor/SessionVault && PYTHONPATH="$PWD/src" python -m unittest discover -s tests
+
+      - name: zip を作る
+        run: |
+          name='${{ steps.version.outputs.name }}'
+          mkdir -p "stage/$name" dist
+          # git が管理しているファイルだけ (サブモジュールの中も)。手元の settings.json などは入らない
+          git ls-files -z --recurse-submodules \
+            | grep -z -v -E '^(\.github/|vendor/SessionVault/\.github/)' \
+            | xargs -0 cp --parents -t "stage/$name"
+          test -f "stage/$name/vendor/SessionVault/src/sessionvault/__init__.py"
+          test ! -e "stage/$name/settings.json"
+          (cd stage && zip -qr "../dist/$name.zip" "$name")
+          unzip -l "dist/$name.zip" | tail -1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: dist/${{ steps.version.outputs.name }}.zip
+
+      # 本文は「その版の変更点」(CHANGELOG.md) + 「初めての方へ」(packaging/release-intro.md)
+      - name: Release の本文を組み立てる
+        if: github.ref_type == 'tag'
+        run: |
+          version='${{ steps.version.outputs.version }}'
+          body=$(awk -v v="$version" '
+            $0 ~ "^##[ \t]+" v "[ \t]*$" { on = 1; next }
+            on && /^##[ \t]/ { exit }
+            on { print }
+          ' CHANGELOG.md | sed -e '/./,$!d')
+          if [ -z "$(echo "$body" | tr -d '[:space:]')" ]; then
+            echo "CHANGELOG.md に $version の節が無いか空です。書いてからタグを打ち直してください" >&2
+            exit 1
+          fi
+          intro=$(perl -0pe 's/<!--.*?-->//gs' packaging/release-intro.md)
+          printf '## %s の変更点\n\n%s\n\n%s\n' "$version" "$body" "$intro" > dist/release-body.md
+
+      - name: Release を作る (下書き)
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' \
+            'dist/${{ steps.version.outputs.name }}.zip' \
+            --title 'ClaudeHistoryViewer ${{ steps.version.outputs.version }}' \
+            --notes-file dist/release-body.md \
+            --draft
