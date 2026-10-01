@@ -123,6 +123,19 @@ python claude_chat_viewer.py
 
 起動後、自動でブラウザが開きます（`http://localhost:57080`）。
 
+### Windows で裏で動かす（start.cmd / stop.cmd）
+
+コンソールの窓を出さずに（`pythonw`）動かすときは、ダブルクリックで使えます。
+
+| ファイル | 動き |
+|---|---|
+| `start.cmd` | 動いているビューアを止めてから起動する（再起動にも使う）。引数はビューアに渡る（例: `start.cmd --no-browser`） |
+| `stop.cmd` | ビューアを止める |
+
+- 止める相手は、コマンドラインにこのフォルダの `claude_chat_viewer.py` を含む Python のプロセスだけです
+- 起動できなかったとき（ポートが使用中など）はエラーを出して止まります。理由は `python claude_chat_viewer.py --no-browser` で見られます
+- ビューアは同じポートで二重に起動できません。2 つ目は「ポートを使えません」で終わります
+
 ### オプション
 
 ```bash
