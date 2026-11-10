@@ -6,6 +6,12 @@ from pathlib import Path
 DEFAULT_PORT = 57080
 DEFAULT_CLAUDE_DIR = Path.home() / ".claude"
 META_FILENAME = "chat-viewer-meta.json"
+# セッション一覧を作るために読んだ結果。消しても次に読み直すだけ
+CACHE_FILENAME = "chat-viewer-cache.json"
+# 全文検索の索引（発言の本文とファイルのパスだけを抜き出したもの）。消しても次に作り直すだけ
+INDEX_FILENAME = "chat-viewer-search-index.json"
+# ゴミ箱。サイドバーで選んで移したセッションの置き場所
+TRASH_DIRNAME = "chat-viewer-trash"
 ARCHIVE_DIRNAME = "chat-viewer-archive"
 SETTINGS_FILE = Path(__file__).parent.parent / "settings.json"
 

@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from . import archive
 from .config import SETTINGS_FILE, load_settings, save_settings, validate_settings
 from .template import HTML_TEMPLATE
+from .trash import TrashError
 
 # 変更してもビューアの再起動まで効かない設定
 RESTART_KEYS = {"port", "auto_open_browser", "archive_enabled", "archive_dir", "archive_interval_min",
@@ -25,7 +26,7 @@ _CONTENT_TYPES = {
 }
 
 
-def make_handler(reader, meta, cfg, claude_settings, memory):
+def make_handler(reader, meta, cfg, claude_settings, memory, trash):
     _origin = f"http://localhost:{cfg['port']}"
 
     class Handler(BaseHTTPRequestHandler):
@@ -53,11 +54,9 @@ def make_handler(reader, meta, cfg, claude_settings, memory):
             elif path == "/api/messages":
                 pid = qs.get("project", [""])[0]
                 sid = qs.get("session", [""])[0]
-                msgs = reader.get_messages(pid, sid)
-                all_meta = meta.get_all()
-                for m in msgs:
-                    m["meta"] = all_meta.get("messages", {}).get(m["uuid"], {})
-                self._json(msgs)
+                # reader は中身を覚えているので、書き換えずに写しへ印を付ける
+                msg_meta = meta.get_all().get("messages", {})
+                self._json([{**m, "meta": msg_meta.get(m["uuid"], {})} for m in reader.get_messages(pid, sid)])
             elif path == "/api/search":
                 q = qs.get("q", [""])[0]
                 pid = qs.get("project", [""])[0] or None
@@ -100,6 +99,8 @@ def make_handler(reader, meta, cfg, claude_settings, memory):
                     self._send(404, "text/plain", b"Not Found")
                 else:
                     self._json(found)
+            elif path == "/api/trash":
+                self._json(trash.list())
             elif path == "/api/backup-status":
                 self._json(archive.STATUS)
             elif path == "/api/settings":
@@ -143,6 +144,19 @@ def make_handler(reader, meta, cfg, claude_settings, memory):
             elif path == "/api/meta/project":
                 meta.set_project(data["project_id"], data["meta"])
                 self._json({"ok": True})
+            elif path in ("/api/trash/put", "/api/trash/restore", "/api/trash/purge"):
+                try:
+                    if path == "/api/trash/put":
+                        result = trash.put(list(data.get("items", [])))
+                    elif path == "/api/trash/restore":
+                        result = trash.restore(list(data.get("ids", [])))
+                    else:
+                        result = trash.purge(list(data.get("ids", [])))
+                        meta.delete_sessions(f"{p['project_id']}/{p['session_id']}" for p in result["purged"])
+                except TrashError as e:
+                    self._json({"ok": False, "error": str(e)})
+                    return
+                self._json({"ok": True, **result})
             elif path == "/api/config/viewer":
                 try:
                     changes = validate_settings(data.get("changes", {}))

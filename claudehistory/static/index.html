@@ -19,6 +19,7 @@
     <button class="hbtn" id="btn-search" title="検索 (Ctrl+K)">🔍 検索</button>
     <button class="hbtn" id="btn-starred" title="スター一覧">⭐ スター</button>
     <button class="hbtn" id="btn-memory" title="memory と、それを書いた会話">🧠 メモリ</button>
+    <button class="hbtn" id="btn-trash" title="捨てたセッション。戻すか、消去してディスクを空ける">🗑 ゴミ箱</button>
     <button class="hbtn" id="btn-ts" title="時刻表示切替">🕐 時刻</button>
     <button class="hbtn" id="btn-theme" title="ダーク/ライト切替">🌙</button>
     <button class="hbtn" id="btn-font-down" title="文字小">A-</button>
@@ -41,9 +42,22 @@
     <div id="sidebar">
       <div id="sidebar-header">
         <input id="sidebar-search" type="text" placeholder="セッション名・タグで絞り込み…" />
-        <button class="tbtn" id="btn-show-hidden" title="非表示項目を表示" style="font-size:13px;margin-top:4px;width:100%;text-align:left;padding:3px 8px">👁 非表示を表示</button>
+        <div id="sidebar-tools">
+          <select id="sess-sort" class="side-select" title="セッションの並べ方">
+            <option value="date">⇅ 日付</option>
+            <option value="size">⇅ 容量</option>
+          </select>
+          <button class="side-btn" id="btn-select-mode" title="セッションを選んでゴミ箱へ捨てる（Shift+クリックで範囲を選ぶ）">☑ 選択</button>
+          <button class="side-btn" id="btn-show-hidden" title="非表示にした項目を表示する">👁 非表示</button>
+        </div>
       </div>
       <div id="project-list"></div>
+      <div id="select-bar">
+        <span id="select-count">0 件</span>
+        <button class="side-btn" id="btn-select-all" title="開いているプロジェクトで、いま見えているセッションを全部選ぶ">全選択</button>
+        <button class="side-btn" id="btn-select-none" title="選択をやめる">解除</button>
+        <button class="side-btn danger" id="btn-select-trash" title="選んだセッションをゴミ箱へ移す（ゴミ箱から戻せます）">🗑 捨てる</button>
+      </div>
     </div>
 
     <div id="resize-handle"></div>
@@ -109,6 +123,21 @@
 <!-- Session context menu -->
 <div id="sess-ctx-menu">
   <div class="ctx-item" id="sess-ctx-hide">🙈 非表示にする</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item ctx-danger" id="sess-ctx-trash" title="元の場所とバックアップから、ゴミ箱へ移す">🗑 捨てる</div>
+</div>
+
+<!-- Trash panel -->
+<div id="trash-panel">
+  <div id="trash-box">
+    <div class="panel-header">
+      <span id="trash-title">🗑 ゴミ箱</span>
+      <button class="side-btn danger" id="btn-trash-empty" title="ゴミ箱の中身を全部消去する（元に戻せません）">✕ 空にする</button>
+      <button id="btn-trash-close" style="font-size:18px">✕</button>
+    </div>
+    <div class="panel-note">捨てたセッションは、元の場所・SessionVault の保管庫・内蔵のバックアップから、ここへ移っています。消去するまでディスクは空きません。</div>
+    <div class="panel-body" id="trash-body"></div>
+  </div>
 </div>
 
 <!-- Starred panel -->

@@ -64,8 +64,8 @@ input{font:inherit;color:inherit}
 /* ── Layout ── */
 #app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 #header{background:var(--header-bg);color:#fff;display:flex;align-items:center;gap:8px;padding:0 16px;height:52px;flex-shrink:0}
-#header h1{font-size:16px;font-weight:700;flex:1;white-space:nowrap}
-.hbtn{padding:6px 10px;border-radius:8px;color:#fff;opacity:.85;transition:opacity .15s,background .15s;font-size:13px}
+#header h1{font-size:16px;font-weight:700;flex:1;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.hbtn{white-space:nowrap;padding:6px 10px;border-radius:8px;color:#fff;opacity:.85;transition:opacity .15s,background .15s;font-size:13px}
 .hbtn:hover{opacity:1;background:rgba(255,255,255,.15)}
 .hbtn.active{opacity:1;background:rgba(255,255,255,.25)}
 #font-select{padding:5px 8px;border-radius:8px;border:none;background:rgba(255,255,255,.15);color:#fff;font-size:12px;cursor:pointer;opacity:.85}
@@ -311,3 +311,40 @@ div.math-raw{display:block;margin:.4em 0;text-align:center}
 #settings-footer{display:flex;gap:8px;align-items:center;justify-content:flex-end}
 #settings-status{flex:1;font-size:12px;color:var(--text-muted)}
 #settings-status.error{color:#dc2626}
+/* ── Sidebar tools / selection / trash ── */
+:root{--danger:#dc2626;--danger-hover:#b91c1c;--danger-soft:#fee2e2}
+[data-theme="dark"]{--danger:#ef4444;--danger-hover:#dc2626;--danger-soft:#3b1414}
+#sidebar-tools{display:flex;gap:4px;margin-top:6px}
+.side-btn{padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--search-bg);color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap;transition:background .1s,border-color .1s}
+.side-btn:hover{background:var(--session-hover);border-color:var(--accent)}
+.side-btn:active{background:var(--session-active)}
+.side-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.side-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.side-btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.side-btn.danger:hover{background:var(--danger-hover);border-color:var(--danger-hover)}
+.side-btn:disabled{opacity:.4;cursor:default;pointer-events:none}
+.side-select{padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--search-bg);color:var(--text);font-size:12px;cursor:pointer}
+.side-select:hover{border-color:var(--accent)}
+#select-bar{display:none;flex-shrink:0;flex-wrap:wrap;align-items:center;gap:4px;padding:8px 10px;border-top:1px solid var(--border);background:var(--sidebar-bg)}
+#select-bar.open{display:flex}
+#select-count{flex-basis:100%;font-size:12px;color:var(--text);font-weight:600}
+#btn-select-trash{margin-left:auto}
+.sess-item{display:flex;gap:6px;align-items:flex-start}
+.sess-body{flex:1;min-width:0}
+.sess-check{display:none;margin-top:2px;width:14px;height:14px;cursor:pointer;accent-color:var(--danger);flex-shrink:0}
+.selecting .sess-check{display:block}
+.sess-item.selected{background:var(--danger-soft)}
+.sess-size{font-size:11px;color:var(--text-muted)}
+.sess-size.big{color:var(--danger);font-weight:600}
+.ctx-item.ctx-danger{color:var(--danger)}
+#trash-panel{position:fixed;inset:0;z-index:100;align-items:flex-start;justify-content:center;padding-top:60px;background:rgba(0,0,0,.4);display:none}
+#trash-panel.open{display:flex}
+#trash-box{background:var(--sidebar-bg);border-radius:12px;width:680px;max-width:92vw;max-height:84vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+#trash-box .panel-header button#btn-trash-empty{font-size:12px;opacity:1}
+#trash-box .panel-header button#btn-trash-close{margin-left:10px}
+.panel-note{font-size:11px;color:var(--text-muted);padding:8px 16px;border-bottom:1px solid var(--border)}
+.trash-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:2px;border:1px solid var(--border)}
+.trash-item-body{flex:1;min-width:0}
+.trash-item .side-btn.danger-outline{background:transparent;border-color:var(--danger);color:var(--danger)}
+.trash-item .side-btn.danger-outline:hover{background:var(--danger-soft)}
+.render-sentinel{height:1px}

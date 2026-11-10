@@ -1,5 +1,8 @@
 import json
+import os
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 
@@ -43,25 +46,43 @@ def _read_head_meta(path: Path) -> tuple:
         pass
     return cwd, timestamp
 
+# Claude Code は JSONL を空白なしで書くので、発言の行には `"type":"user"` などの文字列が必ずある（キーの順番は行ごとに違う）。
+# 行の大半は api-request-blob やツール結果の画像で、JSON を解くと遅い（521 MB のセッションで 1.8 秒）。
+# この文字列が無い行は解かずに飛ばす。あっても発言とは限らないので、解いてから type を確かめる
+_MSG_MARKERS = ('"type":"user"', '"type":"assistant"', '"type": "user"', '"type": "assistant"')
+_TITLE_MARKERS = ('"type":"ai-title"', '"type": "ai-title"')
+
+
+def _maybe_message(line: str) -> bool:
+    return any(m in line for m in _MSG_MARKERS)
+
+
 def _read_session_meta(path: Path) -> tuple:
+    """(題, 最初の発言の時刻, 発言の行の数)。数は目安なので、行を解かずに印の文字列で数える"""
     title = path.stem
     timestamp = None
     msg_count = 0
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                obj = json.loads(line)
-                t = obj.get("type")
-                if t == "ai-title":
-                    title = obj.get("aiTitle", title)
-                elif t in ("user", "assistant"):
-                    msg_count += 1
+                if any(m in line for m in _TITLE_MARKERS):
+                    try:
+                        obj = json.loads(line)
+                    except ValueError:
+                        continue
+                    if obj.get("type") == "ai-title":
+                        title = obj.get("aiTitle", title)
+                elif _maybe_message(line):
                     if timestamp is None:
+                        try:
+                            obj = json.loads(line)
+                        except ValueError:
+                            continue
+                        if obj.get("type") not in ("user", "assistant"):
+                            continue
                         timestamp = obj.get("timestamp")
-    except Exception:
+                    msg_count += 1
+    except OSError:
         pass
     return title, timestamp, msg_count
 
@@ -218,101 +239,146 @@ def _process_tool_use(block: dict) -> dict:
 
     return {"name": name, "file": file_path, "description": description}
 
-def _search_message(obj: dict, query: str, search_type: str) -> dict | None:
-    role = obj.get("type", "")
-    uuid = obj.get("uuid", "")
-    timestamp = obj.get("timestamp", "")
-    content = obj.get("message", {}).get("content", [])
-    if isinstance(content, str):
-        content = [{"type": "text", "text": content}]
+def _stat_key(path: Path):
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return [st.st_size, st.st_mtime_ns]
 
-    if search_type == "file":
-        for block in (content if isinstance(content, list) else []):
-            if isinstance(block, dict) and block.get("type") == "tool_use":
-                inp = block.get("input", {})
-                fp = inp.get("file_path") or inp.get("path") or inp.get("notebook_path") or ""
-                if query in fp.lower():
-                    return {"role": role, "uuid": uuid, "timestamp": timestamp,
-                            "snippet": f"📄 {fp}", "match_type": "file"}
-    else:
-        full_text = ""
-        for block in (content if isinstance(content, list) else []):
-            if isinstance(block, dict) and block.get("type") == "text":
-                full_text += block.get("text", "") + " "
-        if isinstance(content, str):
-            full_text = content
-        if query in full_text.lower():
-            idx = full_text.lower().find(query)
-            s = max(0, idx - 60)
-            e = min(len(full_text), idx + len(query) + 120)
-            snippet = ("…" if s > 0 else "") + full_text[s:e] + ("…" if e < len(full_text) else "")
-            return {"role": role, "uuid": uuid, "timestamp": timestamp,
-                    "snippet": snippet, "match_type": "text"}
-    return None
+
+class _FileCache:
+    """ファイルを読んで得たものを (サイズ, 更新時刻) と一緒に覚える。変わっていないファイルは読み直さない。
+    path を渡すと、次に起動したときも使えるようファイルに書く（履歴が数 GB あると、全部の一覧を作り直すのに十数秒かかる）"""
+
+    # 読み方を変えたら上げる（古い結果を捨てる）
+    VERSION = 1
+
+    def __init__(self, path: Path | None = None):
+        self.path = path
+        self._data: dict = {}  # {種類: {パス: [[サイズ, 更新時刻], 値]}}
+        self._dirty = False
+        self._lock = threading.Lock()
+        if path and path.is_file():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    saved = json.load(f)
+                if saved.get("version") == self.VERSION:
+                    self._data = saved.get("files", {})
+            except (OSError, ValueError):
+                pass
+
+    def get(self, kind: str, path: Path, read):
+        key = _stat_key(path)
+        if key is None:
+            return None
+        name = str(path)
+        hit = self._data.get(kind, {}).get(name)
+        if hit and hit[0] == key:
+            return hit[1]
+        value = read(path)
+        with self._lock:
+            self._data.setdefault(kind, {})[name] = [key, value]
+            self._dirty = True
+        return value
+
+    def save(self) -> None:
+        if not self.path or not self._dirty:
+            return
+        with self._lock:
+            # 消えたファイルの分は捨てる（ゴミ箱に移したものなど）
+            self._data = {kind: {k: v for k, v in files.items() if os.path.exists(k)}
+                          for kind, files in self._data.items()}
+            data = {"version": self.VERSION, "files": self._data}
+            self._dirty = False
+            try:
+                tmp = self.path.with_name(self.path.name + ".tmp")
+                with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+                    json.dump(data, f, ensure_ascii=False)
+                os.replace(tmp, self.path)
+            except OSError:
+                pass
 
 
 class ClaudeDataReader:
-    def __init__(self, claude_dir: Path, backup_roots: list | None = None):
+    # 開いたセッションの表示用の中身を、新しく開いた順にいくつ覚えておくか（前後の移動や、検索から飛んだときに読み直さない）
+    MESSAGE_CACHE_SIZE = 8
+
+    def __init__(self, claude_dir: Path, backup_roots: list | None = None,
+                 cache_file: Path | None = None, index_file: Path | None = None):
+        from .search_index import SearchIndex  # search_index がこのモジュールの関数を使うので、ここで読む
         self.claude_dir = claude_dir
         self.projects_dir = claude_dir / "projects"
         # バックアップ（SessionVault の mirror や、内蔵のバックアップ）。projects と同じ木の形。
         # 元のファイルが消えてもここから読む
         self.backup_roots = list(backup_roots or [])
-        # {path: ((size, mtime_ns), (cwd, timestamp))}。変わっていないファイルは読み直さない
-        self._head_cache = {}
+        # プロジェクト一覧用の (cwd, timestamp) と、セッション一覧用の (題, 時刻, 件数)
+        self._cache = _FileCache(cache_file)
+        self._messages = OrderedDict()  # {path: (stat_key, messages)}
+        self._messages_lock = threading.Lock()
+        self._index = SearchIndex(index_file)
 
     def _head_meta(self, path: Path) -> tuple:
-        try:
-            st = path.stat()
-        except OSError:
-            return None, None
-        key = (st.st_size, st.st_mtime_ns)
-        hit = self._head_cache.get(path)
-        if hit and hit[0] == key:
-            return hit[1]
-        meta = _read_head_meta(path)
-        self._head_cache[path] = (key, meta)
-        return meta
+        meta = self._cache.get("head", path, _read_head_meta)
+        return tuple(meta) if meta else (None, None)
+
+    def _session_meta(self, path: Path) -> tuple:
+        meta = self._cache.get("session", path, _read_session_meta)
+        return tuple(meta) if meta else (path.stem, None, 0)
+
+    def save_cache(self) -> None:
+        self._cache.save()
 
     def _roots(self) -> list:
         """読み込み元。先に書いた方が優先（元のファイル > バックアップ）"""
         return [self.projects_dir, *self.backup_roots]
 
+    def _dir_map(self) -> dict:
+        """{小文字にしたプロジェクト名: [(root の番号, フォルダ)]}。各 root を 1 回だけ読む
+        （プロジェクトごとに全部の root を並べ直すと、検索 1 回で 1 万回 is_dir を呼んで 0.3 秒かかった）"""
+        out = {}
+        for i, root in enumerate(self._roots()):
+            try:
+                with os.scandir(root) as it:
+                    for d in it:
+                        if d.is_dir():
+                            out.setdefault(d.name.casefold(), []).append((i, Path(d.path)))
+            except OSError:
+                pass
+        return out
+
     def _project_ids(self) -> list:
         """プロジェクトのフォルダ名。C--x と c--x は同じプロジェクト（Claude Code が大文字・小文字を揺らす）。
         先に見つけた綴りを使う"""
-        ids = {}
-        for root in self._roots():
-            if root.is_dir():
-                for d in root.iterdir():
-                    if d.is_dir():
-                        ids.setdefault(d.name.casefold(), d.name)
-        return list(ids.values())
+        return [dirs[0][1].name for dirs in self._dir_map().values()]
 
-    def _project_dirs(self, project_id: str) -> list:
+    def _project_dirs(self, project_id: str, dir_map: dict | None = None) -> list:
         """[(root の番号, そのプロジェクトのフォルダ)]。大文字・小文字を無視して探す"""
-        key = project_id.casefold()
-        out = []
-        for i, root in enumerate(self._roots()):
-            if root.is_dir():
-                out += [(i, d) for d in root.iterdir() if d.is_dir() and d.name.casefold() == key]
-        return out
+        return (dir_map if dir_map is not None else self._dir_map()).get(project_id.casefold(), [])
 
-    def _session_files(self, project_id: str) -> dict:
+    def _session_files(self, project_id: str, dir_map: dict | None = None) -> dict:
         """{session_id: (path, archived_only)} を返す。同じ ID は元のファイルを優先"""
         files = {}
-        for i, proj_dir in self._project_dirs(project_id):
-            for f in proj_dir.glob("*.jsonl"):
-                if _is_session_file(f.stem) and f.stem not in files:
-                    files[f.stem] = (f, i > 0)
+        for i, proj_dir in self._project_dirs(project_id, dir_map):
+            try:
+                with os.scandir(proj_dir) as it:
+                    names = sorted(e.name for e in it if e.name.endswith(".jsonl") and e.is_file())
+            except OSError:
+                continue
+            for name in names:
+                stem = name[:-6]
+                if _is_session_file(stem) and stem not in files:
+                    files[stem] = (proj_dir / name, i > 0)
         return files
 
     # ---- Projects ----
 
     def list_projects(self) -> list:
         projects = []
-        for proj_id in self._project_ids():
-            cwd, first_ts, last_ts, session_count = self._project_summary(proj_id)
+        dir_map = self._dir_map()
+        for dirs in dir_map.values():
+            proj_id = dirs[0][1].name
+            cwd, first_ts, last_ts, session_count = self._project_summary(proj_id, dir_map)
             if session_count == 0:
                 continue
             projects.append({
@@ -325,12 +391,12 @@ class ClaudeDataReader:
         projects.sort(key=lambda x: x["last_activity"] or "", reverse=True)
         return projects
 
-    def _project_summary(self, project_id: str):
+    def _project_summary(self, project_id: str, dir_map: dict | None = None):
         cwd = None
         first_ts = None
         last_ts = None
         session_count = 0
-        for f, _ in self._session_files(project_id).values():
+        for f, _ in self._session_files(project_id, dir_map).values():
             session_count += 1
             file_cwd, ts = self._head_meta(f)
             if ts:
@@ -347,15 +413,19 @@ class ClaudeDataReader:
     def list_sessions(self, project_id: str) -> list:
         sessions = []
         for sid, (f, archived) in self._session_files(project_id).items():
-            title, timestamp, msg_count = _read_session_meta(f)
+            title, timestamp, msg_count = self._session_meta(f)
+            key = _stat_key(f)
             sessions.append({
                 "id": sid,
                 "title": title,
                 "timestamp": timestamp,
                 "message_count": msg_count,
                 "archived": archived,
+                # 本体の JSONL の大きさ。サブエージェントや保管庫の世代は含まない
+                "size": key[0] if key else 0,
             })
         sessions.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+        self._cache.save()
         return sessions
 
     # ---- Messages ----
@@ -365,12 +435,34 @@ class ClaudeDataReader:
                   if p.exists()), None)
         if f is None:
             return []
+        key = _stat_key(f)
+        with self._messages_lock:
+            hit = self._messages.get(f)
+            if hit and hit[0] == key:
+                self._messages.move_to_end(f)
+                return hit[1]
+        messages = self._read_messages(f, session_id)
+        with self._messages_lock:
+            self._messages[f] = (key, messages)
+            self._messages.move_to_end(f)
+            while len(self._messages) > self.MESSAGE_CACHE_SIZE:
+                self._messages.popitem(last=False)
+        return messages
+
+    def forget(self, paths) -> None:
+        """ゴミ箱に移したファイルを覚えていたら忘れる"""
+        with self._messages_lock:
+            for p in paths:
+                self._messages.pop(Path(p), None)
+
+    @staticmethod
+    def _read_messages(f: Path, session_id: str) -> list:
         messages = []
         with open(f, encoding="utf-8", errors="replace") as fp:
             for line in fp:
-                line = line.strip()
-                if not line:
+                if not _maybe_message(line):
                     continue
+                line = line.strip()
                 try:
                     obj = json.loads(line)
                     if obj.get("type") not in ("user", "assistant"):
@@ -392,36 +484,34 @@ class ClaudeDataReader:
     def search(self, query: str, project_id: str = None, search_type: str = "text", max_results: int = 300) -> list:
         q = query.lower()
         results = []
-
-        proj_ids = [project_id] if project_id else self._project_ids()
-
-        for proj_id in proj_ids:
-            for session_id, (f, _) in self._session_files(proj_id).items():
-                title = session_id
-                hits = []
-                with open(f, encoding="utf-8", errors="replace") as fp:
-                    for line in fp:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            obj = json.loads(line)
-                            if obj.get("type") == "ai-title":
-                                title = obj.get("aiTitle", title)
-                            elif obj.get("type") in ("user", "assistant"):
-                                # 画面に出さない行 (isMeta・通知・タグだけの行) は探さない
-                                shown = _process_message(obj)
-                                if not shown or shown["role"] != obj.get("type"):
-                                    continue
-                                hit = _search_message(obj, q, search_type)
-                                if hit:
-                                    hit.update({"project_id": proj_id, "session_id": session_id})
-                                    hits.append(hit)
-                        except Exception:
-                            pass
+        dir_map = self._dir_map()
+        proj_ids = [project_id] if project_id else [dirs[0][1].name for dirs in dir_map.values()]
+        # 件数の上限で打ち切るので、新しいセッションから探す
+        targets = [(proj_id, sid, f) for proj_id in proj_ids
+                   for sid, (f, _) in self._session_files(proj_id, dir_map).items()]
+        targets.sort(key=lambda t: self._session_meta(t[2])[1] or "", reverse=True)
+        from .search_index import find
+        for proj_id, session_id, f in targets:
+            hits = find(self._index.entries(f), q, search_type)
+            if hits:
+                title = self._session_meta(f)[0]
                 for h in hits:
-                    h["session_title"] = title
-                    results.append(h)
-                if len(results) >= max_results:
-                    return results
+                    h.update({"project_id": proj_id, "session_id": session_id, "session_title": title})
+                results += hits
+            if len(results) >= max_results:
+                break
+        self._cache.save()
+        self._index.save()
         return results
+
+    def warm_up(self) -> None:
+        """全部のセッションの一覧用の情報と検索の索引を作っておく（起動直後に裏のスレッドで呼ぶ）。
+        前に作ったものがファイルに残っていれば、変わったセッションだけを読む"""
+        dir_map = self._dir_map()
+        for dirs in dir_map.values():
+            for f, _ in self._session_files(dirs[0][1].name, dir_map).values():
+                self._head_meta(f)
+                self._session_meta(f)
+                self._index.entries(f)
+        self._cache.save()
+        self._index.save(force=True)

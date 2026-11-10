@@ -13,6 +13,10 @@ const S = {
   memoTarget: null, // { type: 'session'|'message', key, current }
   sidebarFilter: '',
   showHidden: false,
+  sortBy: localStorage.getItem('sessSort') || 'date',  // セッションの並べ方: date | size
+  selecting: false,      // 選んでゴミ箱へ捨てるモード
+  selected: new Map(),   // "<project>/<session>" → { project_id, session_id, size }
+  lastPick: null,        // Shift+クリックの起点 { projId, sid }
   cfg: { collapse_lines:15, collapse_chars:600, preview_chars:300, show_thinking:true, show_tool_chips:true },
 };
 
@@ -37,8 +41,18 @@ async function init() {
   S.meta = await api('/api/meta');
   renderProjects();
   populateSearchScope();
+  document.getElementById('sess-sort').value = S.sortBy;
+  await loadOpenSessions();
 
-  // open状態のプロジェクトのセッションを並列ロードして描画
+  // Restore last session
+  const last = JSON.parse(localStorage.getItem('lastSession') || 'null');
+  if (last) {
+    await loadSession(last.project, last.session);
+  }
+}
+
+// open状態のプロジェクトのセッションを並列ロードして描画
+async function loadOpenSessions() {
   await Promise.all([...S.openProjects].map(async projId => {
     const sl = document.getElementById('sl-' + projId);
     if (!sl) return;
@@ -50,12 +64,6 @@ async function init() {
     sl.dataset.sessions = JSON.stringify(sessions);
     renderSessionList(sl, projId, S.sidebarFilter.toLowerCase());
   }));
-
-  // Restore last session
-  const last = JSON.parse(localStorage.getItem('lastSession') || 'null');
-  if (last) {
-    await loadSession(last.project, last.session);
-  }
 }
 
 // ── Theme / Font / TS ──
@@ -183,23 +191,35 @@ function renderSessionList(sl, projId, filter) {
     s.title.toLowerCase().includes(filter) ||
     (s.meta?.tags || []).some(t => t.toLowerCase().includes(filter))
   ) : visible;
-  for (const sess of filtered) {
+  const ordered = S.sortBy === 'size' ? [...filtered].sort((a, b) => (b.size || 0) - (a.size || 0)) : filtered;
+  sl.classList.toggle('selecting', S.selecting);
+  for (const sess of ordered) {
     const meta = sess.meta || {};
-    const item = el('div', 'sess-item' + (S.currentSession === sess.id ? ' active' : '') + (meta.hidden ? ' sess-hidden' : ''));
+    const key = `${projId}/${sess.id}`;
+    const item = el('div', 'sess-item' + (S.currentSession === sess.id ? ' active' : '') + (meta.hidden ? ' sess-hidden' : '')
+      + (S.selected.has(key) ? ' selected' : ''));
     item.dataset.sid = sess.id;
     const tags = meta.tags || [];
     const tagsHtml = tags.map(t => `<span class="tag-chip">${esc(t)}</span>`).join('');
+    const big = (sess.size || 0) >= BIG_SESSION;
     item.innerHTML = `
+      <input type="checkbox" class="sess-check" tabindex="-1" ${S.selected.has(key) ? 'checked' : ''}>
+      <div class="sess-body">
       <div class="sess-title">${meta.starred ? '⭐ ' : ''}${esc(sess.title)}</div>
       <div class="sess-meta">
         <span class="sess-date">${fmtDate(sess.timestamp)}</span>
         <span class="sess-count">${sess.message_count}件</span>
+        <span class="sess-size${big ? ' big' : ''}" title="セッション本体の大きさ">${fmtSize(sess.size || 0)}</span>
         ${sess.archived ? '<span class="sess-archived" title="Claude Code 側では削除済み。バックアップから表示しています">保存分</span>' : ''}
       </div>
       ${tagsHtml ? `<div class="sess-tags">${tagsHtml}</div>` : ''}
       ${meta.memo ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📝 ${esc(meta.memo)}</div>` : ''}
+      </div>
     `;
-    item.addEventListener('click', () => loadSession(projId, sess.id));
+    item.addEventListener('click', e => {
+      if (S.selecting) toggleSelect(sl, projId, ordered, sess, e.shiftKey);
+      else loadSession(projId, sess.id);
+    });
     item.addEventListener('contextmenu', e => {
       e.preventDefault();
       openSessContextMenu(e, projId, sess.id, meta);
@@ -210,6 +230,171 @@ function renderSessionList(sl, projId, filter) {
     sl.innerHTML = '<div style="padding:6px 14px;font-size:12px;color:var(--text-muted)">一致なし</div>';
   }
 }
+
+// ── 選んでゴミ箱へ ──
+const BIG_SESSION = 50 * 1024 * 1024;  // これ以上のセッションは容量を赤で出す
+
+function fmtSize(n) {
+  if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(1) + ' GB';
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+function toggleSelect(sl, projId, ordered, sess, range) {
+  const key = `${projId}/${sess.id}`;
+  const on = !S.selected.has(key);
+  let targets = [sess];
+  // Shift+クリックは、同じプロジェクトで前に押した所からここまで
+  if (range && S.lastPick && S.lastPick.projId === projId) {
+    const a = ordered.findIndex(s => s.id === S.lastPick.sid);
+    const b = ordered.findIndex(s => s.id === sess.id);
+    if (a >= 0 && b >= 0) targets = ordered.slice(Math.min(a, b), Math.max(a, b) + 1);
+  }
+  for (const s of targets) {
+    const k = `${projId}/${s.id}`;
+    if (on) S.selected.set(k, { project_id: projId, session_id: s.id, size: s.size || 0 });
+    else S.selected.delete(k);
+  }
+  S.lastPick = { projId, sid: sess.id };
+  renderSessionList(sl, projId, S.sidebarFilter.toLowerCase());
+  updateSelectBar();
+}
+
+function updateSelectBar() {
+  const total = [...S.selected.values()].reduce((s, x) => s + x.size, 0);
+  document.getElementById('select-count').textContent = `${S.selected.size} 件 · ${fmtSize(total)}`;
+  document.getElementById('btn-select-trash').disabled = !S.selected.size;
+}
+
+function setSelecting(on) {
+  S.selecting = on;
+  if (!on) { S.selected.clear(); S.lastPick = null; }
+  document.getElementById('btn-select-mode').classList.toggle('active', on);
+  document.getElementById('select-bar').classList.toggle('open', on);
+  rerenderOpenLists();
+  updateSelectBar();
+}
+
+function rerenderOpenLists() {
+  document.querySelectorAll('.session-list.open').forEach(sl => {
+    renderSessionList(sl, sl.id.replace('sl-', ''), S.sidebarFilter.toLowerCase());
+  });
+}
+
+document.getElementById('btn-select-mode').addEventListener('click', () => setSelecting(!S.selecting));
+document.getElementById('btn-select-none').addEventListener('click', () => {
+  S.selected.clear(); S.lastPick = null; rerenderOpenLists(); updateSelectBar();
+});
+document.getElementById('btn-select-all').addEventListener('click', () => {
+  // 開いているプロジェクトで、いま見えている（絞り込み・非表示を通った）ものだけ
+  document.querySelectorAll('.session-list.open').forEach(sl => {
+    const projId = sl.id.replace('sl-', '');
+    const sessions = JSON.parse(sl.dataset.sessions || '[]');
+    const shown = new Set([...sl.querySelectorAll('.sess-item')].map(x => x.dataset.sid));
+    for (const s of sessions) {
+      if (shown.has(s.id)) S.selected.set(`${projId}/${s.id}`, { project_id: projId, session_id: s.id, size: s.size || 0 });
+    }
+  });
+  rerenderOpenLists(); updateSelectBar();
+});
+document.getElementById('btn-select-trash').addEventListener('click', () => trashSessions([...S.selected.values()]));
+document.getElementById('sess-sort').addEventListener('change', e => {
+  S.sortBy = e.target.value;
+  localStorage.setItem('sessSort', S.sortBy);
+  rerenderOpenLists();
+});
+
+async function trashSessions(items) {
+  if (!items.length) return;
+  const total = items.reduce((s, x) => s + (x.size || 0), 0);
+  if (!confirm(`${items.length} 件のセッション（${fmtSize(total)}）をゴミ箱へ移します。\n` +
+               `元の場所とバックアップの両方から移ります。ゴミ箱から戻せます。`)) return;
+  const r = await (await fetch('/api/trash/put', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ items: items.map(x => ({ project_id: x.project_id, session_id: x.session_id })) }) })).json();
+  if (!r.ok) { alert('ゴミ箱へ移せませんでした: ' + r.error); return; }
+  const gone = new Set(r.moved.map(m => `${m.project_id}/${m.session_id}`));
+  for (const k of gone) S.selected.delete(k);
+  if (S.currentSession && gone.has(`${S.currentProject}/${S.currentSession}`)) clearChat();
+  await reloadSidebar();
+  updateSelectBar();
+  if (r.errors.length) {
+    alert(`${r.errors.length} 件は移せませんでした:\n` + r.errors.slice(0, 10).map(e => `・${e.session_id.slice(0, 8)}… ${e.error}`).join('\n'));
+  }
+}
+
+function clearChat() {
+  S.currentSession = null; S.messages = [];
+  localStorage.removeItem('lastSession');
+  RENDER.observer.disconnect();
+  RENDER.msgs = []; RENDER.next = 0;
+  document.getElementById('session-title').textContent = 'プロジェクトを選択してください';
+  document.getElementById('chat-messages').innerHTML =
+    '<div id="chat-empty"><div class="icon">💬</div><div>左のサイドバーからセッションを選択してください</div></div>';
+}
+
+// プロジェクト一覧と、開いているプロジェクトのセッション一覧を読み直す（ゴミ箱へ移したり戻したりしたあと）
+async function reloadSidebar() {
+  S.projects = await api('/api/projects');
+  renderProjects();
+  await loadOpenSessions();
+}
+
+// ── ゴミ箱 ──
+async function openTrashPanel() {
+  const items = await api('/api/trash');
+  const body = document.getElementById('trash-body');
+  body.innerHTML = '';
+  const total = items.reduce((s, x) => s + (x.size || 0), 0);
+  document.getElementById('trash-title').textContent = `🗑 ゴミ箱 · ${items.length} 件 · ${fmtSize(total)}`;
+  document.getElementById('btn-trash-empty').disabled = !items.length;
+  if (!items.length) {
+    body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">ゴミ箱は空です</div>';
+  }
+  for (const it of items) {
+    const row = el('div', 'trash-item');
+    const info = el('div', 'trash-item-body');
+    info.innerHTML = `
+      <div class="starred-item-title">${esc(it.title || it.session_id)}</div>
+      <div class="starred-item-meta">📁 ${esc(projLabelOf(it.project_id) || it.cwd || it.project_id)} · ${fmtDate(it.timestamp)} · ${it.message_count ?? '?'}件 · ${fmtSize(it.size || 0)}</div>
+      <div class="starred-item-meta">捨てた日時 ${fmtTime(it.trashed_at)} · ファイル ${it.file_count} 個</div>`;
+    const back = el('button', 'side-btn'); back.textContent = '↩ 戻す';
+    back.title = '元の場所とバックアップへ戻す';
+    back.addEventListener('click', () => trashAction('restore', [it.id]));
+    const del = el('button', 'side-btn danger-outline'); del.textContent = '✕ 消去';
+    del.title = 'このセッションを本当に消す（元に戻せません）';
+    del.addEventListener('click', () => {
+      if (confirm(`「${it.title || it.session_id}」（${fmtSize(it.size || 0)}）を消去します。元に戻せません。`)) trashAction('purge', [it.id]);
+    });
+    row.appendChild(info); row.appendChild(back); row.appendChild(del);
+    body.appendChild(row);
+  }
+  document.getElementById('trash-panel').classList.add('open');
+}
+
+async function trashAction(kind, ids) {
+  const r = await (await fetch(`/api/trash/${kind}`, { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ ids }) })).json();
+  if (!r.ok) { alert('できませんでした: ' + r.error); return; }
+  if (r.errors.length) alert(r.errors.map(e => '・' + e.error).join('\n'));
+  if (kind === 'restore') await reloadSidebar();
+  if (kind === 'purge') S.meta = await api('/api/meta');
+  await openTrashPanel();
+}
+
+document.getElementById('btn-trash').addEventListener('click', openTrashPanel);
+document.getElementById('btn-trash-close').addEventListener('click', () => document.getElementById('trash-panel').classList.remove('open'));
+document.getElementById('trash-panel').addEventListener('click', e => {
+  if (e.target === document.getElementById('trash-panel')) document.getElementById('trash-panel').classList.remove('open');
+});
+document.getElementById('btn-trash-empty').addEventListener('click', async () => {
+  const items = await api('/api/trash');
+  const total = items.reduce((s, x) => s + (x.size || 0), 0);
+  // 確かめた一覧の分だけを消す（開いているあいだに別の画面から捨てたものまでは消さない）
+  if (confirm(`ゴミ箱の ${items.length} 件（${fmtSize(total)}）をすべて消去します。元に戻せません。`)) {
+    trashAction('purge', items.map(i => i.id));
+  }
+});
 
 async function loadSession(projId, sessionId) {
   S.currentProject = projId;
@@ -262,6 +447,8 @@ async function loadSession(projId, sessionId) {
 // ── Message rendering ──
 function renderMessages(msgs) {
   const container = document.getElementById('chat-messages');
+  RENDER.observer.disconnect();
+  RENDER.msgs = []; RENDER.next = 0;
   container.innerHTML = '';
   if (!msgs.length) {
     container.innerHTML = '<div id="chat-empty"><div class="icon">🗒️</div><div>メッセージがありません</div></div>';
@@ -274,12 +461,45 @@ function renderMessages(msgs) {
     notice.innerHTML = '<span>〔以前の会話は省略されています〕</span>';
     container.appendChild(notice);
   }
-  for (const msg of msgs) {
-    const row = renderMessage(msg);
-    if (row) container.appendChild(row);
-  }
+  // 数千件を一度に描くと 1 秒近く止まるので、先頭から CHUNK 件ずつ、下の端が見えてきたら描き足す
+  RENDER.msgs = msgs;
+  RENDER.next = 0;
+  RENDER.sentinel = el('div', 'render-sentinel');
+  container.appendChild(RENDER.sentinel);
+  renderMore();
+  RENDER.observer.observe(RENDER.sentinel);
   // 先頭から読めるようにトップへスクロール
   container.scrollTop = 0;
+}
+
+// 描きかけのセッション。next は次に描くメッセージの番号
+const RENDER = {
+  msgs: [], next: 0, sentinel: null, CHUNK: 150,
+  observer: new IntersectionObserver(entries => {
+    if (entries.some(e => e.isIntersecting)) renderMore();
+  }, { root: document.getElementById('chat-messages'), rootMargin: '0px 0px 1500px 0px' }),
+};
+
+function renderMore(upTo) {
+  const end = Math.min(RENDER.msgs.length, Math.max(upTo ?? 0, RENDER.next + RENDER.CHUNK));
+  if (RENDER.next >= end) return;
+  const frag = document.createDocumentFragment();
+  for (; RENDER.next < end; RENDER.next++) {
+    const row = renderMessage(RENDER.msgs[RENDER.next]);
+    if (row) frag.appendChild(row);
+  }
+  RENDER.sentinel.before(frag);
+  if (RENDER.next >= RENDER.msgs.length) {
+    RENDER.observer.disconnect();
+    RENDER.sentinel.remove();
+  }
+}
+
+// uuid のメッセージまで描いてから、その行を返す（検索・スターから飛ぶとき）
+function revealMessage(uuid) {
+  const i = RENDER.msgs.findIndex(m => m.uuid === uuid);
+  if (i >= 0) renderMore(i + 1);
+  return document.querySelector(`#chat-messages [data-uuid="${CSS.escape(uuid)}"]`);
 }
 
 function renderMessage(msg) {
@@ -355,8 +575,8 @@ function renderMessage(msg) {
       const details = document.createElement('details');
       details.className = 'msg-collapse';
       details.innerHTML = `<summary>▼ 続きを見る (${lineCount}行 / ${msg.text.length}文字)</summary>`;
+      // 全文は開いたときに初めて描く（閉じたままの長文まで Markdown と数式を組むと重い）
       const full = el('div', 'bubble-text');
-      full.innerHTML = renderMd(msg.text);
       details.appendChild(full);
       // 下部の「折りたたむ」ボタン
       const collapseBtn = el('div', 'collapse-bottom-btn');
@@ -367,7 +587,11 @@ function renderMessage(msg) {
       });
       details.appendChild(collapseBtn);
       // 展開時はプレビューを隠してバブル先頭へ、閉じたら戻す
+      details._fill = () => {
+        if (!full.dataset.done) { full.innerHTML = renderMd(msg.text); full.dataset.done = '1'; }
+      };
       details.addEventListener('toggle', () => {
+        if (details.open) details._fill();
         preview.style.display = details.open ? 'none' : '';
         if (details.open) bubble.scrollIntoView({ block: 'start' });
       });
@@ -793,7 +1017,7 @@ function openSessContextMenu(e, projId, sessId, meta) {
   document.getElementById('sess-ctx-hide').textContent = meta.hidden ? '👁 再表示' : '🙈 非表示にする';
   const menu = document.getElementById('sess-ctx-menu');
   menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
-  menu.style.top  = Math.min(e.clientY, window.innerHeight - 60) + 'px';
+  menu.style.top  = Math.min(e.clientY, window.innerHeight - 100) + 'px';
   menu.classList.add('open');
 }
 function closeSessContextMenu() {
@@ -809,11 +1033,18 @@ document.getElementById('sess-ctx-hide').addEventListener('click', async () => {
   refreshSessionMeta(key, newMeta);
 });
 
+document.getElementById('sess-ctx-trash').addEventListener('click', () => {
+  closeSessContextMenu();
+  const sl = document.getElementById('sl-' + _ctxSessProjId);
+  const s = JSON.parse(sl?.dataset.sessions || '[]').find(x => x.id === _ctxSessId);
+  trashSessions([{ project_id: _ctxSessProjId, session_id: _ctxSessId, size: s?.size || 0 }]);
+});
+
 // ── Show hidden toggle ──
 document.getElementById('btn-show-hidden').addEventListener('click', () => {
   S.showHidden = !S.showHidden;
   document.getElementById('btn-show-hidden').classList.toggle('active', S.showHidden);
-  document.getElementById('btn-show-hidden').textContent = S.showHidden ? '👁 非表示を隠す' : '👁 非表示を表示';
+  document.getElementById('btn-show-hidden').title = S.showHidden ? '非表示にした項目を隠す' : '非表示にした項目を表示する';
   renderProjects();
   document.querySelectorAll('.session-list.open').forEach(sl => {
     renderSessionList(sl, sl.id.replace('sl-', ''), S.sidebarFilter.toLowerCase());
@@ -838,6 +1069,7 @@ document.getElementById('btn-scroll-top').addEventListener('click', () => {
 });
 document.getElementById('btn-scroll-bottom').addEventListener('click', () => {
   const el = document.getElementById('chat-messages');
+  renderMore(Infinity);  // 末尾まで描いてから
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
 });
 
@@ -950,7 +1182,7 @@ async function runSearch() {
           document.getElementById('search-panel').classList.remove('open');
           await loadSession(r.project_id, r.session_id);
           setTimeout(() => {
-            const msgEl = document.querySelector(`.msg-row[data-uuid="${r.uuid}"]`);
+            const msgEl = revealMessage(r.uuid);
             if (msgEl) { msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); msgEl.style.outline = '2px solid var(--accent)'; setTimeout(() => msgEl.style.outline = '', 2000); }
           }, 300);
         });
@@ -1006,7 +1238,7 @@ async function openStarredPanel() {
           document.getElementById('starred-panel').classList.remove('open');
           await loadSession(m.project_id, m.session_id);
           setTimeout(() => {
-            const target = document.querySelector(`[data-uuid="${m.uuid}"]`);
+            const target = revealMessage(m.uuid);
             if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }, 100);
         });
@@ -1443,6 +1675,7 @@ document.addEventListener('keydown', e => {
     document.getElementById('search-panel').classList.remove('open');
     document.getElementById('starred-panel').classList.remove('open');
     document.getElementById('memory-panel').classList.remove('open');
+    document.getElementById('trash-panel').classList.remove('open');
     document.getElementById('memo-modal').classList.remove('open');
     document.getElementById('lightbox').classList.remove('open');
     document.getElementById('help-modal').classList.remove('open');
@@ -1550,6 +1783,10 @@ async function exportHTML() {
 
   const title = document.getElementById('session-title').textContent;
   const dateStr = new Date().toLocaleString('ja-JP');
+
+  // 画面は少しずつ描いているので、保存の前に全部と、折りたたんだ全文を描く
+  renderMore(Infinity);
+  document.querySelectorAll('#chat-messages details.msg-collapse').forEach(d => d._fill && d._fill());
 
   // クローンして操作UIを除去
   const clone = document.getElementById('chat-messages').cloneNode(true);

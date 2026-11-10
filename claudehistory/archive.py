@@ -20,6 +20,8 @@ from .reader import _is_session_file
 
 # 設定画面に出す、最後のバックアップの結果。pythonw で動かすと print が見えないため
 STATUS: dict = {"engine": None, "store": None, "last_run": None, "summary": "", "errors": []}
+# バックアップを取るあいだ持つ。ゴミ箱へ移すときも持ち、写している途中のファイルを動かさない
+BACKUP_LOCK = threading.Lock()
 
 # サブモジュールとして同梱した SessionVault（git clone --recursive か git submodule update --init で取れる）
 VENDORED_SRC = Path(__file__).resolve().parent.parent / "vendor" / "SessionVault" / "src"
@@ -131,13 +133,14 @@ def start_archive_thread(src_projects: Path, dst_projects: Path, interval_sec: i
         first = True
         while True:
             try:
-                if sv:
-                    _run_sessionvault(sv, sv_config, src_projects, Path(STATUS["store"]), first)
-                else:
-                    n = sync_archive(src_projects, dst_projects)
-                    STATUS["summary"] = f"{n} 件を保存" if n else "変更なし"
-                    if n:
-                        print(f"バックアップ: {n} 件のセッションを保存しました")
+                with BACKUP_LOCK:
+                    if sv:
+                        _run_sessionvault(sv, sv_config, src_projects, Path(STATUS["store"]), first)
+                    else:
+                        n = sync_archive(src_projects, dst_projects)
+                        STATUS["summary"] = f"{n} 件を保存" if n else "変更なし"
+                        if n:
+                            print(f"バックアップ: {n} 件のセッションを保存しました")
             except Exception as e:  # スレッドが止まるとバックアップが黙って途切れるので、記録して続ける
                 STATUS["summary"] = f"失敗しました: {e}"
                 print(f"Warning: バックアップに失敗しました: {e}", file=sys.stderr)

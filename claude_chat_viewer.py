@@ -9,22 +9,24 @@ import socket
 import sys
 import threading
 import webbrowser
-from http.server import HTTPServer
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from claudehistory.archive import load_sessionvault, sessionvault_settings, start_archive_thread
 from claudehistory.claude_settings import ClaudeSettings
 from claudehistory.config import (
-    ARCHIVE_DIRNAME, DEFAULT_CLAUDE_DIR, META_FILENAME, SETTINGS_FILE, load_settings,
+    ARCHIVE_DIRNAME, CACHE_FILENAME, DEFAULT_CLAUDE_DIR, INDEX_FILENAME, META_FILENAME, SETTINGS_FILE,
+    TRASH_DIRNAME, load_settings,
 )
 from claudehistory.reader import ClaudeDataReader
 from claudehistory.memory import MemoryIndex
 from claudehistory.meta import MetaStore
 from claudehistory.server import make_handler
+from claudehistory.trash import Trash
 
 
-class ViewerServer(HTTPServer):
-    """二重に起動できない HTTPServer。
+class ViewerServer(ThreadingHTTPServer):
+    """二重に起動できない HTTPServer。要求ごとにスレッドで答える（全文検索の十数秒のあいだ、ほかの画面が止まらないように）。
     Windows の SO_REUSEADDR（HTTPServer の既定）は使用中のポートにも bind できてしまい、
     再起動で古いプロセスが残ると、古い方が応答し続けて直したコードが効いていないように見えた（2026-10-01）"""
     allow_reuse_address = sys.platform != "win32"
@@ -58,6 +60,7 @@ def main():
     archive_dir = (Path(cfg["archive_dir"]).expanduser() if cfg["archive_dir"]
                    else claude_dir / ARCHIVE_DIRNAME)
     vault = None
+    sv = None
     if cfg["archive_enabled"]:
         sv = load_sessionvault(cfg["sessionvault_src"])
         if sv:
@@ -72,10 +75,13 @@ def main():
     # 内蔵のバックアップが前に写したものも、SessionVault に移ったあと読めるよう残す
     backup_roots.append(archive_dir / "projects")
 
-    reader = ClaudeDataReader(claude_dir, backup_roots)
+    reader = ClaudeDataReader(claude_dir, backup_roots, claude_dir / CACHE_FILENAME, claude_dir / INDEX_FILENAME)
+    # 一覧と検索の索引を先に作っておく。初回は数 GB を読むので十数秒かかるが、そのあいだも画面は使える
+    threading.Thread(target=reader.warm_up, daemon=True, name="warm-up").start()
     meta = MetaStore(claude_dir / META_FILENAME)
     handler = make_handler(reader, meta, cfg, ClaudeSettings(claude_dir),
-                           MemoryIndex(claude_dir / "projects", vault))
+                           MemoryIndex(claude_dir / "projects", vault),
+                           Trash(claude_dir / TRASH_DIRNAME, reader, vault, sv))
 
     try:
         server = ViewerServer(("127.0.0.1", args.port), handler)
