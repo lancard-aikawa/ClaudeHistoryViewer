@@ -7,6 +7,10 @@
 #
 # The running viewer is found by its command line (the full path of claude_chat_viewer.py
 # in this folder), not by a PID file, so a reused PID never stops an unrelated process.
+# A viewer started by hand with a relative path (python .\claude_chat_viewer.py) has no full
+# path in its command line, so the process listening on the viewer port is also stopped when
+# its command line names claude_chat_viewer.py. Without this, start kept failing with
+# "port in use" while such a viewer was running (2026-11-10).
 param(
     [Parameter(Mandatory = $true, Position = 0)][ValidateSet('start', 'stop')][string]$Action,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$ViewerArgs
@@ -17,8 +21,15 @@ $root = Split-Path -Parent $PSScriptRoot
 $main = Join-Path $root 'claude_chat_viewer.py'
 
 function Get-ViewerProcesses {
-    Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'" |
-        Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($main, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
+    $procs = @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'")
+    $listeners = @(Get-NetTCPConnection -LocalPort (Get-ViewerPort) -State Listen -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.OwningProcess })
+    $procs | Where-Object {
+        $_.CommandLine -and (
+            $_.CommandLine.IndexOf($main, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            ($listeners -contains $_.ProcessId -and
+             $_.CommandLine.IndexOf('claude_chat_viewer.py', [StringComparison]::OrdinalIgnoreCase) -ge 0))
+    }
 }
 
 function Stop-Viewer {
@@ -54,7 +65,10 @@ function Get-ViewerPort {
 
 function Start-Viewer {
     Stop-Viewer
-    $argList = @("`"$main`"") + @($ViewerArgs | ForEach-Object { "`"$_`"" })
+    # With no extra arguments $ViewerArgs is $null, and piping $null into ForEach-Object still runs
+    # the block once, which passed an empty "" argument and made argparse exit with code 2 (2026-11-10).
+    $argList = @("`"$main`"")
+    if ($ViewerArgs) { $argList += @($ViewerArgs | ForEach-Object { "`"$_`"" }) }
     $proc = Start-Process pythonw -ArgumentList $argList -WorkingDirectory $root -PassThru
     $port = Get-ViewerPort
     # Wait until the viewer listens. If it exits first, it could not start (port in use, bad settings, ...)
